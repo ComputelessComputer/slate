@@ -1,4 +1,4 @@
-# Remarkable Sync
+# Slate
 
 An [Obsidian](https://obsidian.md) plugin that syncs your [reMarkable](https://remarkable.com) tablet notes directly into your vault as PDF and Markdown.
 
@@ -6,7 +6,7 @@ An [Obsidian](https://obsidian.md) plugin that syncs your [reMarkable](https://r
 
 - **Cloud sync** — Connects to reMarkable Cloud and pulls your documents automatically
 - **Handwriting to PDF** — Renders `.rm` notebook strokes into clean PDF files
-- **PDF annotation overlay** — Merges your handwritten annotations onto imported PDFs
+- **PDF annotation overlay** — Merges your handwritten annotations onto imported PDFs and ebooks
 - **Markdown notes** — Creates a Markdown file per document with YAML frontmatter (title, page count, file type, etc.)
 - **EPUB reader** — Opens `.epub` files synced from your reMarkable directly in Obsidian
 - **Folder structure** — Preserves your reMarkable folder hierarchy in the vault
@@ -18,19 +18,19 @@ An [Obsidian](https://obsidian.md) plugin that syncs your [reMarkable](https://r
 ### From Obsidian Community Plugins
 
 1. Open **Settings → Community Plugins → Browse**
-2. Search for **Remarkable Sync**
+2. Search for **Slate**
 3. Click **Install**, then **Enable**
 
 ### Manual Installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/johnjeong/slate/releases/latest)
-2. Create a folder `remarkable-sync` inside your vault's `.obsidian/plugins/` directory
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/ComputelessComputer/slate/releases/latest)
+2. Create a folder `slate` inside your vault's `.obsidian/plugins/` directory
 3. Copy the downloaded files into that folder
 4. Enable the plugin in **Settings → Community Plugins**
 
 ## Setup
 
-1. Go to **Settings → Remarkable Sync**
+1. Go to **Settings → Slate**
 2. Click the link to [my.remarkable.com](https://my.remarkable.com/device/desktop/connect) to get a one-time code
 3. Enter the code and click **Connect**
 
@@ -42,8 +42,8 @@ Once connected, your reMarkable documents will sync into the configured vault fo
 
 - **Automatic** — Enable "Sync on startup" in settings to sync every time Obsidian opens
 - **Manual** — Click the **reMarkable** button in the status bar, or run the command palette action:
-  - `Remarkable Sync: Sync reMarkable notes` — Incremental sync (only changed documents)
-  - `Remarkable Sync: Force re-sync all reMarkable notes` — Re-downloads everything
+  - `Slate: Sync reMarkable notes` — Incremental sync (only changed documents)
+  - `Slate: Force re-sync all reMarkable notes` — Re-downloads everything
 
 ### Output Structure
 
@@ -51,7 +51,8 @@ Once connected, your reMarkable documents will sync into the configured vault fo
 remarkable/
 ├── My Notebook.md
 ├── attachments/
-│   └── My Notebook.pdf
+│   ├── My Notebook.pdf
+│   └── My Notebook_<pageId>.rm
 └── Work/
     ├── Meeting Notes.md
     └── attachments/
@@ -61,6 +62,7 @@ remarkable/
 Each synced document produces:
 - A **Markdown file** with frontmatter and an embedded link to the PDF
 - A **PDF file** in an `attachments/` subfolder (rendered from handwriting or annotated PDF)
+- Raw **`.rm` files** in `attachments/` for each page
 - An **EPUB file** in `attachments/` if the source was an ebook
 
 ### Settings
@@ -70,17 +72,21 @@ Each synced document produces:
 | Sync folder | Vault folder for synced files | `remarkable` |
 | Sync on startup | Auto-sync when Obsidian launches | On |
 
+## Network Usage
+
+This plugin connects to reMarkable's cloud services to sync your documents:
+
+- `webapp-production-dot-remarkable-production.appspot.com` — Device registration and token refresh
+- `eu.tectonic.remarkable.com` — Document listing and file downloads
+
+No data is sent to any third-party services. Authentication uses reMarkable's official device token flow.
+
 ## Development
 
 ```bash
-# Install dependencies
 pnpm install
-
-# Build for development (with watch)
-pnpm dev
-
-# Production build
-pnpm build
+pnpm dev    # watch mode
+pnpm build  # production build
 ```
 
 ## License

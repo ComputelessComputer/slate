@@ -1,9 +1,10 @@
 {
-	"id": "remarkable-sync",
-	"name": "Remarkable Sync",
+	"id": "slate",
+	"name": "Slate",
 	"version": "1.0.0",
 	"minAppVersion": "1.4.0",
-	"description": "Sync your reMarkable tablet notes directly to your Obsidian vault as PDF and Markdown.",
+	"description": "Sync your reMarkable tablet notes to your vault as PDF and Markdown.",
 	"author": "John Jeong",
+	"authorUrl": "https://github.com/ComputelessComputer",
 	"isDesktopOnly": false
 }

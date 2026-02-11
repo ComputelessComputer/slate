@@ -28,22 +28,22 @@ export class SyncEngine {
 
 	async sync(): Promise<void> {
 		if (this.isSyncing) {
-			new Notice("Remarkable Sync: Already syncing...");
+			new Notice("Slate: Already syncing...");
 			return;
 		}
 
 		if (!this.client.isRegistered) {
-			new Notice("Remarkable Sync: Not registered. Go to Settings to connect your device.");
+			new Notice("Slate: Not registered. Go to Settings to connect your device.");
 			return;
 		}
 
 		this.isSyncing = true;
 
 		try {
-			new Notice("Remarkable Sync: Authenticating...");
+			new Notice("Slate: Authenticating...");
 			await this.client.refreshToken();
 
-			new Notice("Remarkable Sync: Fetching document list...");
+			new Notice("Slate: Fetching document list...");
 			const items = await this.client.listItems();
 
 			const documents = items.filter(i => i.type === "DocumentType");
@@ -81,16 +81,16 @@ export class SyncEngine {
 			await this.saveSettings();
 
 			if (syncedCount === 0 && errorCount === 0) {
-				new Notice("Remarkable Sync: Everything is up to date.");
+				new Notice("Slate: Everything is up to date.");
 			} else {
 				const msg = [];
 				if (syncedCount > 0) msg.push(`${syncedCount} synced`);
 				if (errorCount > 0) msg.push(`${errorCount} failed`);
-				new Notice(`Remarkable Sync: ${msg.join(", ")}.`);
+				new Notice(`Slate: ${msg.join(", ")}.`);
 			}
 		} catch (err) {
-			console.error("Remarkable Sync error:", err);
-			new Notice(`Remarkable Sync failed: ${(err as Error).message}`);
+			console.error("Slate error:", err);
+			new Notice(`Slate failed: ${(err as Error).message}`);
 		} finally {
 			this.isSyncing = false;
 		}

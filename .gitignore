@@ -3,3 +3,4 @@ main.js
 *.js.map
 data.json
 lib/
+.turbo/

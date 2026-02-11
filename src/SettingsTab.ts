@@ -12,7 +12,7 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		// ── Header ────────────────────────────────────────────────────────
-		containerEl.createEl("h2", { text: "Remarkable Sync" });
+		containerEl.createEl("h2", { text: "Slate" });
 
 		// ── Connection Status ─────────────────────────────────────────────
 		const statusEl = containerEl.createEl("div", {

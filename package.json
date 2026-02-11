@@ -1,5 +1,5 @@
 {
-	"name": "remarkable-sync",
+	"name": "slate",
 	"version": "1.0.0",
 	"description": "Sync your reMarkable tablet notes to Obsidian",
 	"main": "main.js",
