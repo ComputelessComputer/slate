@@ -1,0 +1,25 @@
+/* Remarkable Sync Plugin Styles */
+
+.remarkable-sync-status {
+	margin-bottom: 16px;
+	padding: 12px;
+	border-radius: 6px;
+	background: var(--background-secondary);
+}
+
+.remarkable-sync-connected {
+	color: var(--text-success);
+	font-weight: 600;
+	margin: 0 0 4px 0;
+}
+
+.remarkable-sync-disconnected {
+	color: var(--text-muted);
+	font-weight: 600;
+	margin: 0 0 4px 0;
+}
+
+.remarkable-sync-device-id {
+	margin: 0;
+	font-size: var(--font-smallest);
+}

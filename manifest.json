@@ -1,0 +1,9 @@
+{
+	"id": "remarkable-sync",
+	"name": "Remarkable Sync",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.0",
+	"description": "Sync your reMarkable tablet notes directly to your Obsidian vault as PDF and Markdown.",
+	"author": "John Jeong",
+	"isDesktopOnly": false
+}
