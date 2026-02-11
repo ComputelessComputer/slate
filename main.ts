@@ -3,6 +3,7 @@ import { PluginSettings, DEFAULT_SETTINGS } from "./src/types";
 import { RemarkableClient } from "./src/RemarkableClient";
 import { SyncEngine } from "./src/SyncEngine";
 import { RemarkableSyncSettingTab } from "./src/SettingsTab";
+import { EpubView, EPUB_VIEW_TYPE } from "./src/EpubView";
 
 export default class RemarkableSyncPlugin extends Plugin {
 	settings!: PluginSettings;
@@ -17,7 +18,9 @@ export default class RemarkableSyncPlugin extends Plugin {
 			this.initClient();
 		}
 
-		// Settings tab
+		this.registerView(EPUB_VIEW_TYPE, (leaf) => new EpubView(leaf));
+		this.registerExtensions(["epub"], EPUB_VIEW_TYPE);
+
 		this.addSettingTab(new RemarkableSyncSettingTab(this.app, this));
 
 		// Status bar

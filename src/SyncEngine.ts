@@ -1,7 +1,7 @@
 import { Notice, Vault, TFile } from "obsidian";
 import { RemarkableClient } from "./RemarkableClient";
-import { parseRmFile, RmParseError } from "./RmParser";
-import { generatePdf } from "./PdfGenerator";
+import { parseRmFile } from "./RmParser";
+import { generatePdf, overlayAnnotations } from "./PdfGenerator";
 import { generateMarkdown } from "./MarkdownGenerator";
 import {
 	RemarkableItem,
@@ -10,6 +10,7 @@ import {
 	ParsedDocument,
 	PluginSettings,
 } from "./types";
+
 
 export class SyncEngine {
 	private isSyncing = false;
@@ -51,11 +52,14 @@ export class SyncEngine {
 			let syncedCount = 0;
 			let errorCount = 0;
 
-			for (const doc of documents) {
-				const existing = this.settings.syncState[doc.id];
-				if (existing && existing.hash === doc.hash) {
-					continue;
-				}
+		for (const doc of documents) {
+			const existing = this.settings.syncState[doc.id];
+			if (existing && existing.hash === doc.hash) {
+				const safeName = sanitizeFilename(doc.visibleName);
+				const mdPath = `${existing.vaultPath}/${safeName}.md`;
+				const localExists = !!this.vault.getAbstractFileByPath(mdPath);
+				if (localExists) continue;
+			}
 
 				try {
 					await this.syncDocument(doc, allItems);
@@ -96,7 +100,7 @@ export class SyncEngine {
 		doc: RemarkableItem,
 		allItems: RemarkableItem[],
 	): Promise<void> {
-		console.log(`[RemarkableSync] Syncing "${doc.visibleName}" (${doc.id})`);
+
 
 		const contentEntry = doc.fileEntries.find(e => e.id.endsWith(".content"));
 		let content: DocumentContent = {
@@ -126,8 +130,15 @@ export class SyncEngine {
 			basePdf = await this.client.getBinaryByHash(pdfEntry.hash);
 		}
 
+		let baseEpub: ArrayBuffer | null = null;
+		const epubEntry = doc.fileEntries.find(e => e.id.endsWith(".epub"));
+		if (epubEntry) {
+			baseEpub = await this.client.getBinaryByHash(epubEntry.hash);
+		}
+
 		const pageOrder = this.getPageOrder(content, doc);
 		const pages: RmPage[] = [];
+		const rawRmFiles: Map<string, ArrayBuffer> = new Map();
 
 		for (const pageId of pageOrder) {
 			const rmEntry = doc.fileEntries.find(
@@ -137,34 +148,54 @@ export class SyncEngine {
 
 			try {
 				const rmData = await this.client.getBinaryByHash(rmEntry.hash);
+				rawRmFiles.set(pageId, rmData);
 				const page = parseRmFile(rmData);
 				pages.push(page);
 			} catch (err) {
-				if (err instanceof RmParseError) {
-					console.warn(`Skipping page ${pageId}: ${err.message}`);
-				} else {
-					throw err;
-				}
+				console.warn(`Skipping page ${pageId}: ${(err as Error).message}`);
 			}
 		}
 
 		const vaultFolderPath = this.getVaultPath(doc, allItems);
-		await this.ensureFolderExists(vaultFolderPath);
+		const attachmentsPath = `${vaultFolderPath}/attachments`;
+		await this.ensureFolderExists(attachmentsPath);
 
 		const safeName = sanitizeFilename(doc.visibleName);
-		const pdfPath = `${vaultFolderPath}/${safeName}.pdf`;
+		const pdfPath = `${attachmentsPath}/${safeName}.pdf`;
 		const mdPath = `${vaultFolderPath}/${safeName}.md`;
 
-		let pdfBytes: ArrayBuffer;
-		if (basePdf) {
+		let pdfBytes: ArrayBuffer | null = null;
+		const hasAnnotations = pages.some(p =>
+			p.highlights.length > 0 || p.layers.some(l => l.strokes.length > 0)
+		);
+
+		if (basePdf && hasAnnotations) {
+			pdfBytes = await overlayAnnotations(basePdf, pages);
+		} else if (basePdf) {
 			pdfBytes = basePdf;
 		} else if (pages.length > 0) {
-			pdfBytes = await generatePdf(pages);
-		} else {
+			pdfBytes = await generatePdf(pages, content.transform);
+		}
+
+		if (!pdfBytes && !baseEpub && rawRmFiles.size === 0) {
 			return;
 		}
 
-		await this.writeFile(pdfPath, pdfBytes);
+		if (pdfBytes) {
+			await this.writeFile(pdfPath, pdfBytes);
+		}
+
+		let epubRelPath = "";
+		if (baseEpub) {
+			const epubPath = `${attachmentsPath}/${safeName}.epub`;
+			await this.writeFile(epubPath, baseEpub);
+			epubRelPath = `attachments/${safeName}.epub`;
+		}
+
+		for (const [pageId, rmData] of rawRmFiles) {
+			const rmPath = `${attachmentsPath}/${safeName}_${pageId}.rm`;
+			await this.writeFile(rmPath, rmData);
+		}
 
 		const parsed: ParsedDocument = {
 			id: doc.id,
@@ -177,7 +208,8 @@ export class SyncEngine {
 			basePdf,
 		};
 
-		const mdContent = generateMarkdown(parsed, `${safeName}.pdf`);
+		const pdfRelPath = pdfBytes ? `attachments/${safeName}.pdf` : "";
+		const mdContent = generateMarkdown(parsed, pdfRelPath, epubRelPath);
 		await this.writeFile(mdPath, new TextEncoder().encode(mdContent).buffer as ArrayBuffer);
 
 		this.settings.syncState[doc.id] = {

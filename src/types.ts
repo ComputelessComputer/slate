@@ -103,11 +103,25 @@ export interface DocumentContent {
 
 export interface RmPage {
 	layers: RmLayer[];
+	highlights: RmHighlight[];
 	version: number;
 }
 
 export interface RmLayer {
 	strokes: RmStroke[];
+}
+
+export interface RmHighlightRect {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+export interface RmHighlight {
+	color: number;
+	text: string;
+	rects: RmHighlightRect[];
 }
 
 export interface RmStroke {

@@ -22,14 +22,13 @@ async function rmRequest(opts: {
 	contentType?: string;
 }): Promise<RequestUrlResponse> {
 	const { url, method = "GET", headers, body, contentType } = opts;
-	const shortUrl = url.split("?")[0].slice(0, 80);
-	console.log(`${TAG} ${method} ${shortUrl}`);
 
 	try {
 		return await requestUrl({ url, method, headers, body, contentType });
 	} catch (err: unknown) {
 		const e = err as Record<string, unknown>;
 		const status = e?.status ?? "network_error";
+		const shortUrl = url.split("?")[0].slice(0, 80);
 		console.error(`${TAG} ${method} ${shortUrl} → ${status}`, err);
 		throw new RmApiError(String(status), typeof status === "number" ? status : 0);
 	}
@@ -95,7 +94,6 @@ export class RemarkableClient {
 				deviceID: deviceId,
 			}),
 		});
-		console.log(`${TAG} Device registered`);
 		return response.text;
 	}
 
@@ -109,57 +107,35 @@ export class RemarkableClient {
 		});
 
 		this.userToken = response.text;
-		console.log(`${TAG} Token refreshed`);
 	}
 
 	async getRootHash(): Promise<RootHashResponse> {
-		this.ensureAuth();
-		const response = await rmRequest({
-			url: `${RM_RAW_HOST}/sync/v4/root`,
-			method: "GET",
-			headers: { "Authorization": `Bearer ${this.userToken}` },
-		});
+		const response = await this.authedRequest(`${RM_RAW_HOST}/sync/v4/root`);
 		return response.json as RootHashResponse;
 	}
 
 	async getEntries(hash: string): Promise<EntriesFile> {
-		this.ensureAuth();
-		const response = await rmRequest({
-			url: `${RM_RAW_HOST}/sync/v3/files/${hash}`,
-			method: "GET",
-			headers: { "Authorization": `Bearer ${this.userToken}` },
-		});
+		const response = await this.authedRequest(`${RM_RAW_HOST}/sync/v3/files/${hash}`);
 		return parseEntriesText(response.text);
 	}
 
 	async getTextByHash(hash: string): Promise<string> {
-		this.ensureAuth();
-		const response = await rmRequest({
-			url: `${RM_RAW_HOST}/sync/v3/files/${hash}`,
-			method: "GET",
-			headers: { "Authorization": `Bearer ${this.userToken}` },
-		});
+		const response = await this.authedRequest(`${RM_RAW_HOST}/sync/v3/files/${hash}`);
 		return response.text;
 	}
 
 	async getBinaryByHash(hash: string): Promise<ArrayBuffer> {
-		this.ensureAuth();
-		const response = await rmRequest({
-			url: `${RM_RAW_HOST}/sync/v3/files/${hash}`,
-			method: "GET",
-			headers: { "Authorization": `Bearer ${this.userToken}` },
-		});
+		const response = await this.authedRequest(`${RM_RAW_HOST}/sync/v3/files/${hash}`);
 		return response.arrayBuffer;
 	}
 
 	async listItems(): Promise<RemarkableItem[]> {
-		this.ensureAuth();
+		if (!this.userToken) {
+			await this.refreshToken();
+		}
 
 		const root = await this.getRootHash();
-		console.log(`${TAG} Root hash: ${root.hash}, schema: ${root.schemaVersion}`);
-
 		const rootEntries = await this.getEntries(root.hash);
-		console.log(`${TAG} Found ${rootEntries.entries.length} top-level entries`);
 
 		const items: RemarkableItem[] = [];
 
@@ -198,7 +174,7 @@ export class RemarkableClient {
 			}
 		}
 
-		console.log(`${TAG} Listed ${items.length} items (${items.filter(i => i.type === "DocumentType").length} docs, ${items.filter(i => i.type === "CollectionType").length} folders)`);
+
 		return items;
 	}
 
@@ -210,8 +186,28 @@ export class RemarkableClient {
 		this.userToken = null;
 	}
 
-	private ensureAuth(): void {
-		if (!this.userToken) throw new Error("Not authenticated. Call refreshToken() first.");
+	private async authedRequest(url: string): Promise<RequestUrlResponse> {
+		if (!this.userToken) {
+			await this.refreshToken();
+		}
+
+		try {
+			return await rmRequest({
+				url,
+				method: "GET",
+				headers: { "Authorization": `Bearer ${this.userToken}` },
+			});
+		} catch (err) {
+			if (err instanceof RmApiError && (err.status === 401 || err.status === 403)) {
+				await this.refreshToken();
+				return await rmRequest({
+					url,
+					method: "GET",
+					headers: { "Authorization": `Bearer ${this.userToken}` },
+				});
+			}
+			throw err;
+		}
 	}
 }
 
