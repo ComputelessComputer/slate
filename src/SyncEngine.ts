@@ -124,6 +124,10 @@ export class SyncEngine {
 			}
 		}
 
+		if (this.settings.excludePdfs && content.fileType === "pdf") {
+			return;
+		}
+
 		let basePdf: ArrayBuffer | null = null;
 		const pdfEntry = doc.fileEntries.find(e => e.id.endsWith(".pdf"));
 		if (pdfEntry) {

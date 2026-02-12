@@ -169,6 +169,7 @@ export interface PluginSettings {
 	deviceToken: string;
 	syncFolder: string;
 	syncOnStartup: boolean;
+	excludePdfs: boolean;
 	lastSyncTimestamp: number;
 	syncState: Record<string, SyncRecord>;
 	deviceId: string;
@@ -178,6 +179,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	deviceToken: "",
 	syncFolder: "remarkable",
 	syncOnStartup: true,
+	excludePdfs: false,
 	lastSyncTimestamp: 0,
 	syncState: {},
 	deviceId: "",

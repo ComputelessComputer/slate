@@ -117,6 +117,21 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 					})
 			);
 
+		new Setting(containerEl)
+			.setName("Exclude PDF documents")
+			.setDesc(
+				"Skip PDF-based documents during sync. Only notebooks and EPUBs will be synced. " +
+				"Useful if you manage PDFs with another tool like PDF++."
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.excludePdfs)
+					.onChange(async (value) => {
+						this.plugin.settings.excludePdfs = value;
+						await this.plugin.savePluginSettings();
+					})
+			);
+
 		// ── Manual Sync ───────────────────────────────────────────────────
 		if (this.plugin.settings.deviceToken) {
 			containerEl.createEl("h3", { text: "Actions" });
