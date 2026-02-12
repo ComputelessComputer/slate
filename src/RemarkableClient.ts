@@ -14,6 +14,9 @@ import {
 
 const TAG = "[RemarkableSync]";
 
+const MAX_RETRIES = 5;
+const BASE_DELAY_MS = 1000;
+
 async function rmRequest(opts: {
 	url: string;
 	method?: string;
@@ -23,15 +26,31 @@ async function rmRequest(opts: {
 }): Promise<RequestUrlResponse> {
 	const { url, method = "GET", headers, body, contentType } = opts;
 
-	try {
-		return await requestUrl({ url, method, headers, body, contentType });
-	} catch (err: unknown) {
-		const e = err as Record<string, unknown>;
-		const status = e?.status ?? "network_error";
-		const shortUrl = url.split("?")[0].slice(0, 80);
-		console.error(`${TAG} ${method} ${shortUrl} → ${status}`, err);
-		throw new RmApiError(String(status), typeof status === "number" ? status : 0);
+	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+		try {
+			return await requestUrl({ url, method, headers, body, contentType });
+		} catch (err: unknown) {
+			const e = err as Record<string, unknown>;
+			const status = e?.status ?? "network_error";
+			const shortUrl = url.split("?")[0].slice(0, 80);
+
+			if (status === 429 && attempt < MAX_RETRIES) {
+				const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+				console.warn(`${TAG} ${method} ${shortUrl} → 429, retrying in ${delay}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+				await sleep(delay);
+				continue;
+			}
+
+			console.error(`${TAG} ${method} ${shortUrl} → ${status}`, err);
+			throw new RmApiError(String(status), typeof status === "number" ? status : 0);
+		}
 	}
+
+	throw new Error("Unreachable");
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 class RmApiError extends Error {

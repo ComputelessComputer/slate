@@ -161,6 +161,12 @@ export interface SyncRecord {
 	hash: string;
 	lastModified: string;
 	vaultPath: string;
+	/** Cached display name (for incremental sync) */
+	visibleName?: string;
+	/** Cached parent folder id (for incremental sync) */
+	parent?: string;
+	/** Cached item type (for incremental sync) */
+	type?: "DocumentType" | "CollectionType";
 }
 
 // ── Plugin Settings ────────────────────────────────────────────────────────

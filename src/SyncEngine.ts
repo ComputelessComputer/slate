@@ -5,6 +5,8 @@ import { generatePdf, overlayAnnotations } from "./PdfGenerator";
 import { generateMarkdown } from "./MarkdownGenerator";
 import {
 	RemarkableItem,
+	RawEntry,
+	ItemMetadata,
 	DocumentContent,
 	RmPage,
 	ParsedDocument,
@@ -40,26 +42,70 @@ export class SyncEngine {
 		this.isSyncing = true;
 
 		try {
-			new Notice("Slate: Authenticating...");
+		new Notice("Slate: Authenticating...");
 			await this.client.refreshToken();
 
 			new Notice("Slate: Fetching document list...");
-			const items = await this.client.listItems();
+			const root = await this.client.getRootHash();
+			const rootEntries = await this.client.getEntries(root.hash);
 
-			const documents = items.filter(i => i.type === "DocumentType");
-			const allItems = items;
+			const allItems: RemarkableItem[] = [];
+			const changedDocs: RemarkableItem[] = [];
+
+			for (const entry of rootEntries.entries) {
+				const cached = this.settings.syncState[entry.id];
+
+				if (cached && cached.hash === entry.hash && cached.visibleName && cached.type) {
+					// Unchanged — reconstruct from cache, skip API calls
+					const item: RemarkableItem = {
+						id: entry.id,
+						hash: entry.hash,
+						visibleName: cached.visibleName,
+						lastModified: cached.lastModified,
+						parent: cached.parent ?? "",
+						pinned: false,
+						type: cached.type,
+						fileEntries: [],
+					};
+					allItems.push(item);
+					continue;
+				}
+
+				// Changed or new — full fetch
+				try {
+					const item = await this.fetchItem(entry);
+					if (!item) continue;
+					allItems.push(item);
+
+					// Cache metadata for all items (documents + collections)
+					this.settings.syncState[item.id] = {
+						hash: item.hash,
+						lastModified: item.lastModified,
+						vaultPath: this.settings.syncState[item.id]?.vaultPath ?? "",
+						visibleName: item.visibleName,
+						parent: item.parent,
+						type: item.type,
+					};
+
+					if (item.type === "DocumentType") {
+						changedDocs.push(item);
+					}
+				} catch (err) {
+					console.warn(`[RemarkableSync] Failed to read entry ${entry.id}:`, err);
+				}
+			}
 
 			let syncedCount = 0;
 			let errorCount = 0;
 
-		for (const doc of documents) {
-			const existing = this.settings.syncState[doc.id];
-			if (existing && existing.hash === doc.hash) {
-				const safeName = sanitizeFilename(doc.visibleName);
-				const mdPath = `${existing.vaultPath}/${safeName}.md`;
-				const localExists = !!this.vault.getAbstractFileByPath(mdPath);
-				if (localExists) continue;
-			}
+			for (const doc of changedDocs) {
+				const existing = this.settings.syncState[doc.id];
+				if (existing && existing.hash === doc.hash && existing.vaultPath) {
+					const safeName = sanitizeFilename(doc.visibleName);
+					const mdPath = `${existing.vaultPath}/${safeName}.md`;
+					const localExists = !!this.vault.getAbstractFileByPath(mdPath);
+					if (localExists) continue;
+				}
 
 				try {
 					await this.syncDocument(doc, allItems);
@@ -70,7 +116,8 @@ export class SyncEngine {
 				}
 			}
 
-			const cloudIds = new Set(documents.map(d => d.id));
+			// Clean up stale entries (deleted on cloud)
+			const cloudIds = new Set(rootEntries.entries.map(e => e.id));
 			for (const id of Object.keys(this.settings.syncState)) {
 				if (!cloudIds.has(id)) {
 					delete this.settings.syncState[id];
@@ -94,6 +141,39 @@ export class SyncEngine {
 		} finally {
 			this.isSyncing = false;
 		}
+	}
+
+	/**
+	 * Fetch full item details (sub-entries + metadata) for a single root entry.
+	 * Returns null if the item should be skipped (deleted, unknown type).
+	 */
+	private async fetchItem(entry: RawEntry): Promise<RemarkableItem | null> {
+		const TAG = "[RemarkableSync]";
+		const itemEntries = await this.client.getEntries(entry.hash);
+		const fileEntries = itemEntries.entries;
+
+		const metaEntry = fileEntries.find(e => e.id.endsWith(".metadata"));
+		if (!metaEntry) {
+			console.warn(`${TAG} No metadata for entry ${entry.id}, skipping`);
+			return null;
+		}
+
+		const metaText = await this.client.getTextByHash(metaEntry.hash);
+		const metadata = JSON.parse(metaText) as ItemMetadata;
+
+		if (metadata.deleted) return null;
+		if (metadata.type !== "DocumentType" && metadata.type !== "CollectionType") return null;
+
+		return {
+			id: entry.id,
+			hash: entry.hash,
+			visibleName: metadata.visibleName,
+			lastModified: metadata.lastModified,
+			parent: metadata.parent,
+			pinned: metadata.pinned,
+			type: metadata.type,
+			fileEntries,
+		};
 	}
 
 	private async syncDocument(
