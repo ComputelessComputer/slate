@@ -12,7 +12,7 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		// ── Header ────────────────────────────────────────────────────────
-		containerEl.createEl("h2", { text: "Slate" });
+		new Setting(containerEl).setName("Slate").setHeading();
 
 		// ── Connection Status ─────────────────────────────────────────────
 		const statusEl = containerEl.createEl("div", {
@@ -21,7 +21,7 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 
 		if (this.plugin.settings.deviceToken) {
 			statusEl.createEl("p", {
-				text: "Connected to reMarkable Cloud",
+			text: "Connected to remarkable cloud",
 				cls: "remarkable-sync-connected",
 			});
 			statusEl.createEl("p", {
@@ -36,12 +36,12 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 		}
 
 		// ── Device Registration ───────────────────────────────────────────
-		containerEl.createEl("h3", { text: "Device Registration" });
+		new Setting(containerEl).setName("Device registration").setHeading();
 
 		if (this.plugin.settings.deviceToken) {
 			new Setting(containerEl)
 				.setName("Disconnect device")
-				.setDesc("Remove the connection to your reMarkable cloud account.")
+				.setDesc("Remove the connection to your remarkable cloud account.")
 				.addButton((btn) =>
 					btn
 						.setButtonText("Disconnect")
@@ -51,7 +51,7 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 							this.plugin.settings.deviceId = "";
 							this.plugin.settings.syncState = {};
 							await this.plugin.savePluginSettings();
-							new Notice("Disconnected from reMarkable Cloud.");
+						new Notice("Disconnected from remarkable cloud.");
 							this.display(); // Refresh
 						})
 				);
@@ -77,24 +77,24 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 						});
 					text.inputEl.addEventListener("keydown", (e) => {
 						if (e.key === "Enter") {
-							registerDevice(this.plugin, codeValue, this);
-						}
+						void registerDevice(this.plugin, codeValue, this);
+					}
 					});
 				})
 				.addButton((btn) =>
 					btn
 						.setButtonText("Connect")
 						.setCta()
-						.onClick(() => registerDevice(this.plugin, codeValue, this))
+						.onClick(() => { void registerDevice(this.plugin, codeValue, this); })
 				);
 		}
 
 		// ── Sync Settings ─────────────────────────────────────────────────
-		containerEl.createEl("h3", { text: "Sync Settings" });
+		new Setting(containerEl).setName("Sync settings").setHeading();
 
 		new Setting(containerEl)
 			.setName("Sync folder")
-			.setDesc('Vault folder where reMarkable files will be saved. Default: "remarkable"')
+			.setDesc('Vault folder where remarkable files will be saved. Default: "remarkable"')
 			.addText((text) =>
 				text
 					.setPlaceholder("remarkable")
@@ -134,7 +134,7 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 
 		// ── Manual Sync ───────────────────────────────────────────────────
 		if (this.plugin.settings.deviceToken) {
-			containerEl.createEl("h3", { text: "Actions" });
+			new Setting(containerEl).setName("Actions").setHeading();
 
 			new Setting(containerEl)
 				.setName("Sync now")
@@ -183,7 +183,7 @@ async function registerDevice(
 	}
 
 	try {
-		new Notice("Connecting to reMarkable...");
+		new Notice("Connecting to remarkable...");
 		const deviceId = plugin.settings.deviceId || generateDeviceId();
 		const deviceToken = await RemarkableClient.register(code, deviceId);
 
@@ -192,7 +192,7 @@ async function registerDevice(
 		await plugin.savePluginSettings();
 		plugin.initClient();
 
-		new Notice("Successfully connected to reMarkable Cloud!");
+		new Notice("Successfully connected to remarkable cloud!");
 		tab.display(); // Refresh to show connected state
 	} catch (err) {
 		new Notice(`Connection failed: ${(err as Error).message}`);

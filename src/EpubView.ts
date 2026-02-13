@@ -39,11 +39,12 @@ export class EpubView extends FileView {
 		}
 	}
 
-	async onUnloadFile(): Promise<void> {
+	onUnloadFile(): Promise<void> {
 		this.contentEl.empty();
+		return Promise.resolve();
 	}
 
-	private async renderEpub(files: Record<string, Uint8Array>): Promise<void> {
+	private renderEpub(files: Record<string, Uint8Array>): void {
 		const containerXml = this.findContainerXml(files);
 		if (!containerXml) {
 			this.container.createEl("p", { text: "Invalid epub: missing META-INF/container.xml" });
@@ -160,9 +161,8 @@ export class EpubView extends FileView {
 	}
 
 	private decodeHtmlEntities(text: string): string {
-		const el = document.createElement("span");
-		el.innerHTML = text;
-		return el.textContent ?? text;
+		const doc = new DOMParser().parseFromString(text, "text/html");
+		return doc.body.textContent ?? text;
 	}
 
 	private renderXhtml(
@@ -176,11 +176,8 @@ export class EpubView extends FileView {
 			? chapterHref.substring(0, chapterHref.lastIndexOf("/") + 1)
 			: "";
 
-		const bodyMatch = xhtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-		const bodyHtml = bodyMatch ? bodyMatch[1] : xhtml;
-
-		const wrapper = document.createElement("div");
-		wrapper.innerHTML = bodyHtml;
+		const parsed = new DOMParser().parseFromString(xhtml, "text/html");
+		const wrapper = parsed.body;
 
 		const images = wrapper.querySelectorAll("img");
 		images.forEach(img => {

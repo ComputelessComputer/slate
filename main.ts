@@ -26,19 +26,19 @@ export default class RemarkableSyncPlugin extends Plugin {
 		// Status bar
 		const statusBarItem = this.addStatusBarItem();
 		statusBarItem.addClass("mod-clickable");
-		statusBarItem.setText("reMarkable");
-		statusBarItem.addEventListener("click", () => this.runSync());
+		statusBarItem.setText("Slate");
+		statusBarItem.addEventListener("click", () => { void this.runSync(); });
 
 		// Commands
 		this.addCommand({
 			id: "sync-remarkable",
-			name: "Sync reMarkable notes",
-			callback: () => this.runSync(),
+			name: "Sync notes",
+			callback: () => { void this.runSync(); },
 		});
 
 		this.addCommand({
 			id: "force-sync-remarkable",
-			name: "Force re-sync all reMarkable notes",
+			name: "Force re-sync all notes",
 			callback: async () => {
 				this.settings.syncState = {};
 				await this.savePluginSettings();
@@ -50,7 +50,7 @@ export default class RemarkableSyncPlugin extends Plugin {
 		if (this.settings.syncOnStartup && this.settings.deviceToken) {
 			this.app.workspace.onLayoutReady(() => {
 				// Small delay to let Obsidian fully initialize
-				setTimeout(() => this.runSync(), 3000);
+				setTimeout(() => { void this.runSync(); }, 3000);
 			});
 		}
 	}

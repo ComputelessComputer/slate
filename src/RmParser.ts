@@ -284,8 +284,8 @@ function parseV6File(view: DataView, bytes: Uint8Array): RmPage {
 
 		if (blockStart + 4 + blockLength > bytes.length) break;
 
-		const _unknown = reader.readUint8();
-		const _minVersion = reader.readUint8();
+		reader.readUint8();  // unknown
+		reader.readUint8();  // minVersion
 		const currentVersion = reader.readUint8();
 		const blockType = reader.readUint8();
 
@@ -342,7 +342,7 @@ function parseV6LineBlock(
 	const pen = reader.readTaggedInt(1);
 	const color = reader.readTaggedInt(2);
 	const thicknessScale = reader.readTaggedDouble(3);
-	const _startingLength = reader.readTaggedFloat(4);
+	reader.readTaggedFloat(4); // startingLength
 
 	// Points subblock
 	const pointsLength = reader.readSubblockHeader(5);
@@ -424,7 +424,7 @@ function parseV6GlyphBlock(
 	const textSubLen = reader.readSubblockHeader(5);
 	const textSubEnd = reader.pos + textSubLen;
 	const strLen = reader.readVaruint();
-	const _isAscii = reader.readUint8();
+	reader.readUint8(); // isAscii
 	const textBytes = new Uint8Array(strLen);
 	for (let i = 0; i < strLen; i++) {
 		textBytes[i] = reader.readUint8();

@@ -28,22 +28,22 @@ export class SyncEngine {
 
 	async sync(): Promise<void> {
 		if (this.isSyncing) {
-			new Notice("Slate: Already syncing...");
+			new Notice("Slate: already syncing...");
 			return;
 		}
 
 		if (!this.client.isRegistered) {
-			new Notice("Slate: Not registered. Go to Settings to connect your device.");
+			new Notice("Slate: not registered. Go to settings to connect your device.");
 			return;
 		}
 
 		this.isSyncing = true;
 
 		try {
-			new Notice("Slate: Authenticating...");
+			new Notice("Slate: authenticating...");
 			await this.client.refreshToken();
 
-			new Notice("Slate: Fetching document list...");
+			new Notice("Slate: fetching document list...");
 			const items = await this.client.listItems();
 
 			const documents = items.filter(i => i.type === "DocumentType");
@@ -81,7 +81,7 @@ export class SyncEngine {
 			await this.saveSettings();
 
 			if (syncedCount === 0 && errorCount === 0) {
-				new Notice("Slate: Everything is up to date.");
+				new Notice("Slate: everything is up to date.");
 			} else {
 				const msg = [];
 				if (syncedCount > 0) msg.push(`${syncedCount} synced`);
@@ -214,7 +214,7 @@ export class SyncEngine {
 
 		const pdfRelPath = pdfBytes ? `attachments/${safeName}.pdf` : "";
 		const mdContent = generateMarkdown(parsed, pdfRelPath, epubRelPath);
-		await this.writeFile(mdPath, new TextEncoder().encode(mdContent).buffer as ArrayBuffer);
+		await this.writeFile(mdPath, new TextEncoder().encode(mdContent).buffer);
 
 		this.settings.syncState[doc.id] = {
 			hash: doc.hash,

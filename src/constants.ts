@@ -41,7 +41,7 @@ export const enum PenType {
 
 /** Map raw pen ID to normalized tool category */
 export function getNormalizedPen(penId: number): NormalizedPen {
-	switch (penId) {
+	switch (penId as PenType) {
 		case PenType.BRUSH_1:
 		case PenType.BRUSH_2:
 			return NormalizedPen.BRUSH;

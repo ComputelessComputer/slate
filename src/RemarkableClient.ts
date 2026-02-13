@@ -26,11 +26,10 @@ async function rmRequest(opts: {
 	try {
 		return await requestUrl({ url, method, headers, body, contentType });
 	} catch (err: unknown) {
-		const e = err as Record<string, unknown>;
-		const status = e?.status ?? "network_error";
+		const statusCode = (err as { status?: number })?.status;
 		const shortUrl = url.split("?")[0].slice(0, 80);
-		console.error(`${TAG} ${method} ${shortUrl} → ${status}`, err);
-		throw new RmApiError(String(status), typeof status === "number" ? status : 0);
+		console.error(`${TAG} ${method} ${shortUrl} → ${statusCode ?? "network_error"}`, err);
+		throw new RmApiError(statusCode ? String(statusCode) : "network_error", statusCode ?? 0);
 	}
 }
 
@@ -53,7 +52,7 @@ function parseEntriesText(raw: string): EntriesFile {
 		};
 	} else if (version === 4) {
 		const infoLine = lines[1];
-		const [, id, countStr, sizeStr] = infoLine.split(":");
+		const [, id, , sizeStr] = infoLine.split(":");
 		return {
 			schemaVersion: 4,
 			entries: lines.slice(2).map(parseEntryLine),
