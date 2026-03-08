@@ -172,6 +172,12 @@ export interface SyncFailure {
 	error: string;
 }
 
+export interface SyncSkip {
+	id: string;
+	name: string;
+	reason: string;
+}
+
 export interface SyncReport {
 	startTime: number;
 	endTime: number;
@@ -182,6 +188,25 @@ export interface SyncReport {
 	skippedCount: number;
 	failedCount: number;
 	failedItems: SyncFailure[];
+	fatalError?: string;
+	logPath?: string;
+}
+
+export interface SyncProgressSnapshot {
+	phase: string;
+	startedAt: number;
+	currentItem?: string;
+	cloudItemCount: number;
+	inspectedItemCount: number;
+	documentCount: number;
+	processedDocumentCount: number;
+	listedCount: number;
+	syncedCount: number;
+	skippedCount: number;
+	failedCount: number;
+	recentSynced: string[];
+	recentSkipped: SyncSkip[];
+	recentFailures: SyncFailure[];
 	fatalError?: string;
 	logPath?: string;
 }

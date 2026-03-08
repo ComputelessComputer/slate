@@ -12,13 +12,22 @@ import {
 	RmPage,
 	ParsedDocument,
 	PluginSettings,
+	SyncFailure,
+	SyncProgressSnapshot,
 	SyncRecord,
 	SyncReport,
+	SyncSkip,
 } from "./types";
 
+type SyncDocumentResult =
+	| { status: "synced" }
+	| { status: "skipped"; reason: string };
+
+const MAX_PROGRESS_ITEMS = 8;
 
 export class SyncEngine {
 	private isSyncing = false;
+	private progress: SyncProgressSnapshot | null = null;
 
 	constructor(
 		private client: RemarkableClient,
@@ -31,9 +40,21 @@ export class SyncEngine {
 		return this.isSyncing;
 	}
 
+	getProgressSnapshot(): SyncProgressSnapshot | null {
+		if (!this.progress) {
+			return null;
+		}
+
+		return {
+			...this.progress,
+			recentSynced: [...this.progress.recentSynced],
+			recentSkipped: this.progress.recentSkipped.map((item) => ({ ...item })),
+			recentFailures: this.progress.recentFailures.map((item) => ({ ...item })),
+		};
+	}
+
 	async sync(): Promise<void> {
 		if (this.isSyncing) {
-			new Notice("Slate: already syncing...");
 			return;
 		}
 
@@ -43,19 +64,23 @@ export class SyncEngine {
 		}
 
 		this.isSyncing = true;
+		this.startProgress();
 		const syncLogger = new SyncLogger();
 		syncLogger.setLogPath(this.getSyncLogPath());
 
 		try {
 			await this.ensureFolderExists(this.getSyncRootPath());
 
+			this.setProgressPhase("Authenticating");
 			new Notice("Slate: authenticating...");
 			await this.client.refreshToken();
 
+			this.setProgressPhase("Listing cloud items");
 			new Notice("Slate: fetching document list...");
 			const root = await this.client.getRootHash();
 			const rootEntries = await this.client.getEntries(root.hash);
 			syncLogger.setCloudItemCount(rootEntries.entries.length);
+			this.setCloudItemCount(rootEntries.entries.length);
 
 			const allItems: RemarkableItem[] = [];
 			const documentsToSync: RemarkableItem[] = [];
@@ -63,21 +88,26 @@ export class SyncEngine {
 			for (const entry of rootEntries.entries) {
 				const cached = this.settings.syncState[entry.id];
 				const cachedItem = this.getCachedItem(entry, cached);
-
-				if (cachedItem?.type === "CollectionType") {
-					allItems.push(cachedItem);
-					syncLogger.logListed(cachedItem.id, cachedItem.visibleName);
-					continue;
-				}
-
-				if (cachedItem?.type === "DocumentType" && this.hasLocalMarkdown(cachedItem, cached)) {
-					allItems.push(cachedItem);
-					syncLogger.logListed(cachedItem.id, cachedItem.visibleName);
-					syncLogger.logSkipped(cachedItem.id, cachedItem.visibleName);
-					continue;
-				}
+				this.setProgressPhase("Listing cloud items", cachedItem?.visibleName ?? cached?.visibleName ?? entry.id);
 
 				try {
+					if (cachedItem?.type === "CollectionType") {
+						allItems.push(cachedItem);
+						syncLogger.logListed(cachedItem.id, cachedItem.visibleName);
+						this.recordListed();
+						continue;
+					}
+
+					if (cachedItem?.type === "DocumentType" && this.hasLocalMarkdown(cachedItem, cached)) {
+						allItems.push(cachedItem);
+						syncLogger.logListed(cachedItem.id, cachedItem.visibleName);
+						syncLogger.logSkipped(cachedItem.id, cachedItem.visibleName);
+						this.recordListed();
+						this.recordDocumentQueued();
+						this.recordSkipped(cachedItem.id, cachedItem.visibleName, "unchanged (already synced)");
+						continue;
+					}
+
 					const item = await this.fetchItem(entry);
 					if (!item) {
 						continue;
@@ -85,29 +115,39 @@ export class SyncEngine {
 
 					allItems.push(item);
 					syncLogger.logListed(item.id, item.visibleName);
+					this.recordListed();
 					this.cacheItem(item);
 
 					if (item.type === "DocumentType") {
+						this.recordDocumentQueued();
 						documentsToSync.push(item);
 					}
 				} catch (err) {
 					const name = cached?.visibleName ?? entry.id;
 					console.warn(`[RemarkableSync] Failed to read entry ${entry.id}:`, err);
 					syncLogger.logFailed(entry.id, name, this.getErrorMessage(err));
+					this.recordFailure(entry.id, name, this.getErrorMessage(err), false);
+				} finally {
+					this.recordInspectedItem();
 				}
 			}
 
+			this.setProgressPhase("Syncing documents");
 			for (const doc of documentsToSync) {
+				this.setProgressPhase("Syncing documents", doc.visibleName);
 				try {
 					const result = await this.syncDocument(doc, allItems);
-					if (result === "synced") {
+					if (result.status === "synced") {
 						syncLogger.logSynced(doc.id, doc.visibleName);
+						this.recordSynced(doc.visibleName);
 					} else {
 						syncLogger.logSkipped(doc.id, doc.visibleName);
+						this.recordSkipped(doc.id, doc.visibleName, result.reason);
 					}
 				} catch (err) {
 					console.error(`Failed to sync "${doc.visibleName}":`, err);
 					syncLogger.logFailed(doc.id, doc.visibleName, this.getErrorMessage(err));
+					this.recordFailure(doc.id, doc.visibleName, this.getErrorMessage(err));
 				}
 			}
 
@@ -119,11 +159,13 @@ export class SyncEngine {
 			}
 
 			const report = await this.finalizeSync(syncLogger);
+			this.finishProgress(report);
 			new Notice(syncLogger.formatNotice(report));
 		} catch (err) {
 			syncLogger.logSessionFailure(this.getErrorMessage(err));
 			console.error("Slate error:", err);
 			const report = await this.finalizeSync(syncLogger);
+			this.finishProgress(report);
 			new Notice(syncLogger.formatNotice(report));
 		} finally {
 			this.isSyncing = false;
@@ -133,9 +175,7 @@ export class SyncEngine {
 	private async syncDocument(
 		doc: RemarkableItem,
 		allItems: RemarkableItem[],
-	): Promise<"synced" | "skipped"> {
-
-
+	): Promise<SyncDocumentResult> {
 		const contentEntry = doc.fileEntries.find(e => e.id.endsWith(".content"));
 		let content: DocumentContent = {
 			fileType: "",
@@ -159,7 +199,7 @@ export class SyncEngine {
 		}
 
 		if (this.settings.excludePdfs && content.fileType === "pdf") {
-			return "skipped";
+			return { status: "skipped", reason: "excluded PDF" };
 		}
 
 		let basePdf: ArrayBuffer | null = null;
@@ -216,7 +256,7 @@ export class SyncEngine {
 		}
 
 		if (!pdfBytes && !baseEpub && rawRmFiles.size === 0) {
-			return "skipped";
+			return { status: "skipped", reason: "no supported content" };
 		}
 
 		if (pdfBytes) {
@@ -260,7 +300,7 @@ export class SyncEngine {
 		};
 		await this.saveSettings();
 
-		return "synced";
+		return { status: "synced" };
 	}
 
 	private async fetchItem(entry: RawEntry): Promise<RemarkableItem | null> {
@@ -409,6 +449,130 @@ export class SyncEngine {
 
 	private getSyncLogPath(): string {
 		return `${this.getSyncRootPath()}/.sync-log.md`;
+	}
+
+	private startProgress(): void {
+		this.progress = {
+			phase: "Starting",
+			startedAt: Date.now(),
+			cloudItemCount: 0,
+			inspectedItemCount: 0,
+			documentCount: 0,
+			processedDocumentCount: 0,
+			listedCount: 0,
+			syncedCount: 0,
+			skippedCount: 0,
+			failedCount: 0,
+			recentSynced: [],
+			recentSkipped: [],
+			recentFailures: [],
+			logPath: this.getSyncLogPath(),
+		};
+	}
+
+	private setProgressPhase(phase: string, currentItem?: string): void {
+		if (!this.progress) {
+			return;
+		}
+
+		this.progress.phase = phase;
+		this.progress.currentItem = currentItem;
+	}
+
+	private setCloudItemCount(count: number): void {
+		if (this.progress) {
+			this.progress.cloudItemCount = count;
+		}
+	}
+
+	private recordInspectedItem(): void {
+		if (this.progress) {
+			this.progress.inspectedItemCount += 1;
+		}
+	}
+
+	private recordListed(): void {
+		if (this.progress) {
+			this.progress.listedCount += 1;
+		}
+	}
+
+	private recordDocumentQueued(): void {
+		if (this.progress) {
+			this.progress.documentCount += 1;
+		}
+	}
+
+	private recordSynced(name: string): void {
+		if (!this.progress) {
+			return;
+		}
+
+		this.progress.processedDocumentCount += 1;
+		this.progress.syncedCount += 1;
+		this.pushRecentSynced(name);
+	}
+
+	private recordSkipped(id: string, name: string, reason: string): void {
+		if (!this.progress) {
+			return;
+		}
+
+		this.progress.processedDocumentCount += 1;
+		this.progress.skippedCount += 1;
+		this.pushRecentSkipped({ id, name, reason });
+	}
+
+	private recordFailure(id: string, name: string, error: string, countsAsDocument = true): void {
+		if (!this.progress) {
+			return;
+		}
+
+		if (countsAsDocument) {
+			this.progress.processedDocumentCount += 1;
+		}
+
+		this.progress.failedCount += 1;
+		this.pushRecentFailure({ id, name, error });
+	}
+
+	private pushRecentSynced(name: string): void {
+		if (!this.progress) {
+			return;
+		}
+
+		this.progress.recentSynced = [name, ...this.progress.recentSynced].slice(0, MAX_PROGRESS_ITEMS);
+	}
+
+	private pushRecentSkipped(skip: SyncSkip): void {
+		if (!this.progress) {
+			return;
+		}
+
+		this.progress.recentSkipped = [skip, ...this.progress.recentSkipped].slice(0, MAX_PROGRESS_ITEMS);
+	}
+
+	private pushRecentFailure(failure: SyncFailure): void {
+		if (!this.progress) {
+			return;
+		}
+
+		this.progress.recentFailures = [failure, ...this.progress.recentFailures].slice(0, MAX_PROGRESS_ITEMS);
+	}
+
+	private finishProgress(report: SyncReport): void {
+		if (!this.progress) {
+			return;
+		}
+
+		this.progress.phase = report.fatalError ? "Failed" : "Completed";
+		this.progress.currentItem = undefined;
+		this.progress.listedCount = report.listedCount;
+		this.progress.syncedCount = report.syncedCount;
+		this.progress.skippedCount = report.skippedCount;
+		this.progress.failedCount = report.failedCount;
+		this.progress.fatalError = report.fatalError;
+		this.progress.logPath = report.logPath ?? this.progress.logPath;
 	}
 
 	private async finalizeSync(syncLogger: SyncLogger): Promise<SyncReport> {
