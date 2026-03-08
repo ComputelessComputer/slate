@@ -176,6 +176,17 @@ export interface SyncSkip {
 	id: string;
 	name: string;
 	reason: string;
+	kind:
+		| "cached_unchanged"
+		| "reused_local_markdown"
+		| "excluded_pdf"
+		| "no_supported_content"
+		| "other";
+}
+
+export interface SyncCompleted {
+	name: string;
+	kind: "new_download" | "redownloaded";
 }
 
 export interface SyncReport {
@@ -201,10 +212,21 @@ export interface SyncProgressSnapshot {
 	documentCount: number;
 	processedDocumentCount: number;
 	listedCount: number;
+	listedFromCacheCount: number;
+	listedFromCloudCount: number;
+	cachedCollectionCount: number;
+	cachedDocumentCount: number;
 	syncedCount: number;
+	newDownloadCount: number;
+	redownloadCount: number;
 	skippedCount: number;
+	cachedSkipCount: number;
+	reusedLocalSkipCount: number;
+	excludedPdfSkipCount: number;
+	unsupportedContentSkipCount: number;
+	otherSkipCount: number;
 	failedCount: number;
-	recentSynced: string[];
+	recentCompleted: SyncCompleted[];
 	recentSkipped: SyncSkip[];
 	recentFailures: SyncFailure[];
 	fatalError?: string;

@@ -21,11 +21,16 @@ import {
 
 type SyncDocumentResult =
 	| { status: "synced" }
-	| { status: "skipped"; reason: string };
+	| { status: "skipped"; reason: string; kind: SyncSkip["kind"] };
 
 interface LocalDocumentRecord {
 	lastModified: string;
 	vaultPath: string;
+}
+
+interface QueuedDocument {
+	doc: RemarkableItem;
+	existingLocalDocument: boolean;
 }
 
 const MAX_PROGRESS_ITEMS = 8;
@@ -52,7 +57,7 @@ export class SyncEngine {
 
 		return {
 			...this.progress,
-			recentSynced: [...this.progress.recentSynced],
+			recentCompleted: this.progress.recentCompleted.map((item) => ({ ...item })),
 			recentSkipped: this.progress.recentSkipped.map((item) => ({ ...item })),
 			recentFailures: this.progress.recentFailures.map((item) => ({ ...item })),
 		};
@@ -89,7 +94,7 @@ export class SyncEngine {
 			this.setCloudItemCount(rootEntries.entries.length);
 
 			const allItems: RemarkableItem[] = [];
-			const documentsToSync: RemarkableItem[] = [];
+			const documentsToSync: QueuedDocument[] = [];
 
 			for (const entry of rootEntries.entries) {
 				const cached = this.settings.syncState[entry.id];
@@ -101,7 +106,7 @@ export class SyncEngine {
 					if (cachedItem?.type === "CollectionType") {
 						allItems.push(cachedItem);
 						syncLogger.logListed(cachedItem.id, cachedItem.visibleName);
-						this.recordListed();
+						this.recordListedFromCache(cachedItem.type);
 						continue;
 					}
 
@@ -109,9 +114,14 @@ export class SyncEngine {
 						allItems.push(cachedItem);
 						syncLogger.logListed(cachedItem.id, cachedItem.visibleName);
 						syncLogger.logSkipped(cachedItem.id, cachedItem.visibleName);
-						this.recordListed();
+						this.recordListedFromCache(cachedItem.type);
 						this.recordDocumentQueued();
-						this.recordSkipped(cachedItem.id, cachedItem.visibleName, "unchanged (already synced)");
+						this.recordSkipped(
+							cachedItem.id,
+							cachedItem.visibleName,
+							"unchanged (already synced)",
+							"cached_unchanged",
+						);
 						continue;
 					}
 
@@ -122,19 +132,25 @@ export class SyncEngine {
 
 					allItems.push(item);
 					syncLogger.logListed(item.id, item.visibleName);
-					this.recordListed();
+					this.recordListedFromCloud();
 					this.cacheItem(item);
 
 					if (item.type === "DocumentType") {
 						this.recordDocumentQueued();
 						const localDocument = localDocumentIndex.get(item.id);
+						const existingLocalDocument = this.hasExistingLocalDocument(item, cached, localDocument);
 						if (this.canReuseLocalDocument(item, localDocument)) {
 							this.settings.syncState[item.id].vaultPath = localDocument.vaultPath;
 							syncLogger.logSkipped(item.id, item.visibleName);
-							this.recordSkipped(item.id, item.visibleName, "unchanged (reused local markdown)");
+							this.recordSkipped(
+								item.id,
+								item.visibleName,
+								"unchanged (reused local markdown)",
+								"reused_local_markdown",
+							);
 							continue;
 						}
-						documentsToSync.push(item);
+						documentsToSync.push({ doc: item, existingLocalDocument });
 					}
 				} catch (err) {
 					const name = cached?.visibleName ?? entry.id;
@@ -147,16 +163,20 @@ export class SyncEngine {
 			}
 
 			this.setProgressPhase("Syncing documents");
-			for (const doc of documentsToSync) {
+			for (const queuedDocument of documentsToSync) {
+				const { doc, existingLocalDocument } = queuedDocument;
 				this.setProgressPhase("Syncing documents", doc.visibleName);
 				try {
 					const result = await this.syncDocument(doc, allItems);
 					if (result.status === "synced") {
 						syncLogger.logSynced(doc.id, doc.visibleName);
-						this.recordSynced(doc.visibleName);
+						this.recordSynced(
+							doc.visibleName,
+							existingLocalDocument ? "redownloaded" : "new_download",
+						);
 					} else {
 						syncLogger.logSkipped(doc.id, doc.visibleName);
-						this.recordSkipped(doc.id, doc.visibleName, result.reason);
+						this.recordSkipped(doc.id, doc.visibleName, result.reason, result.kind);
 					}
 				} catch (err) {
 					console.error(`Failed to sync "${doc.visibleName}":`, err);
@@ -213,7 +233,7 @@ export class SyncEngine {
 		}
 
 		if (this.settings.excludePdfs && content.fileType === "pdf") {
-			return { status: "skipped", reason: "excluded PDF" };
+			return { status: "skipped", reason: "excluded PDF", kind: "excluded_pdf" };
 		}
 
 		let basePdf: ArrayBuffer | null = null;
@@ -270,7 +290,7 @@ export class SyncEngine {
 		}
 
 		if (!pdfBytes && !baseEpub && rawRmFiles.size === 0) {
-			return { status: "skipped", reason: "no supported content" };
+			return { status: "skipped", reason: "no supported content", kind: "no_supported_content" };
 		}
 
 		if (pdfBytes) {
@@ -529,6 +549,18 @@ export class SyncEngine {
 		return !!localDocument && item.lastModified === localDocument.lastModified;
 	}
 
+	private hasExistingLocalDocument(
+		item: RemarkableItem,
+		cached: SyncRecord | undefined,
+		localDocument: LocalDocumentRecord | undefined,
+	): boolean {
+		if (localDocument) {
+			return true;
+		}
+
+		return this.hasLocalMarkdown(item, cached);
+	}
+
 	private startProgress(): void {
 		this.progress = {
 			phase: "Starting",
@@ -538,10 +570,21 @@ export class SyncEngine {
 			documentCount: 0,
 			processedDocumentCount: 0,
 			listedCount: 0,
+			listedFromCacheCount: 0,
+			listedFromCloudCount: 0,
+			cachedCollectionCount: 0,
+			cachedDocumentCount: 0,
 			syncedCount: 0,
+			newDownloadCount: 0,
+			redownloadCount: 0,
 			skippedCount: 0,
+			cachedSkipCount: 0,
+			reusedLocalSkipCount: 0,
+			excludedPdfSkipCount: 0,
+			unsupportedContentSkipCount: 0,
+			otherSkipCount: 0,
 			failedCount: 0,
-			recentSynced: [],
+			recentCompleted: [],
 			recentSkipped: [],
 			recentFailures: [],
 			logPath: this.getSyncLogPath(),
@@ -569,10 +612,27 @@ export class SyncEngine {
 		}
 	}
 
-	private recordListed(): void {
-		if (this.progress) {
-			this.progress.listedCount += 1;
+	private recordListedFromCache(type: RemarkableItem["type"]): void {
+		if (!this.progress) {
+			return;
 		}
+
+		this.progress.listedCount += 1;
+		this.progress.listedFromCacheCount += 1;
+		if (type === "CollectionType") {
+			this.progress.cachedCollectionCount += 1;
+		} else {
+			this.progress.cachedDocumentCount += 1;
+		}
+	}
+
+	private recordListedFromCloud(): void {
+		if (!this.progress) {
+			return;
+		}
+
+		this.progress.listedCount += 1;
+		this.progress.listedFromCloudCount += 1;
 	}
 
 	private recordDocumentQueued(): void {
@@ -581,24 +641,47 @@ export class SyncEngine {
 		}
 	}
 
-	private recordSynced(name: string): void {
+	private recordSynced(name: string, kind: "new_download" | "redownloaded"): void {
 		if (!this.progress) {
 			return;
 		}
 
 		this.progress.processedDocumentCount += 1;
 		this.progress.syncedCount += 1;
-		this.pushRecentSynced(name);
+		if (kind === "new_download") {
+			this.progress.newDownloadCount += 1;
+		} else {
+			this.progress.redownloadCount += 1;
+		}
+
+		this.pushRecentCompleted(name, kind);
 	}
 
-	private recordSkipped(id: string, name: string, reason: string): void {
+	private recordSkipped(id: string, name: string, reason: string, kind: SyncSkip["kind"]): void {
 		if (!this.progress) {
 			return;
 		}
 
 		this.progress.processedDocumentCount += 1;
 		this.progress.skippedCount += 1;
-		this.pushRecentSkipped({ id, name, reason });
+		switch (kind) {
+			case "cached_unchanged":
+				this.progress.cachedSkipCount += 1;
+				break;
+			case "reused_local_markdown":
+				this.progress.reusedLocalSkipCount += 1;
+				break;
+			case "excluded_pdf":
+				this.progress.excludedPdfSkipCount += 1;
+				break;
+			case "no_supported_content":
+				this.progress.unsupportedContentSkipCount += 1;
+				break;
+			default:
+				this.progress.otherSkipCount += 1;
+		}
+
+		this.pushRecentSkipped({ id, name, reason, kind });
 	}
 
 	private recordFailure(id: string, name: string, error: string, countsAsDocument = true): void {
@@ -614,12 +697,12 @@ export class SyncEngine {
 		this.pushRecentFailure({ id, name, error });
 	}
 
-	private pushRecentSynced(name: string): void {
+	private pushRecentCompleted(name: string, kind: "new_download" | "redownloaded"): void {
 		if (!this.progress) {
 			return;
 		}
 
-		this.progress.recentSynced = [name, ...this.progress.recentSynced].slice(0, MAX_PROGRESS_ITEMS);
+		this.progress.recentCompleted = [{ name, kind }, ...this.progress.recentCompleted].slice(0, MAX_PROGRESS_ITEMS);
 	}
 
 	private pushRecentSkipped(skip: SyncSkip): void {

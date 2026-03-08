@@ -54,12 +54,25 @@ export class SyncProgressModal extends Modal {
 		contentEl.createEl("p", {
 			text: `Documents: ${snapshot.processedDocumentCount}/${snapshot.documentCount} processed | ${snapshot.syncedCount} completed | ${snapshot.skippedCount} skipped | ${snapshot.failedCount} errors`,
 		});
+		contentEl.createEl("p", {
+			text: `Listed from cache: ${snapshot.listedFromCacheCount} (docs ${snapshot.cachedDocumentCount}, collections ${snapshot.cachedCollectionCount}) | fetched from cloud: ${snapshot.listedFromCloudCount}`,
+		});
+		contentEl.createEl("p", {
+			text: `Completed: ${snapshot.syncedCount} total | new downloads ${snapshot.newDownloadCount} | re-downloaded ${snapshot.redownloadCount}`,
+		});
+		contentEl.createEl("p", {
+			text: `Skipped: ${snapshot.skippedCount} total | cached unchanged ${snapshot.cachedSkipCount} | reused local markdown ${snapshot.reusedLocalSkipCount} | excluded PDF ${snapshot.excludedPdfSkipCount} | no supported content ${snapshot.unsupportedContentSkipCount}${snapshot.otherSkipCount > 0 ? ` | other ${snapshot.otherSkipCount}` : ""}`,
+		});
 
 		if (snapshot.fatalError) {
 			contentEl.createEl("p", { text: `Fatal error: ${snapshot.fatalError}` });
 		}
 
-		renderNameList(contentEl, "Recent completed", snapshot.recentSynced);
+		renderDetailedList(
+			contentEl,
+			"Recent completed",
+			snapshot.recentCompleted.map((item) => `${item.name}: ${item.kind === "new_download" ? "new download" : "re-downloaded"}`),
+		);
 		renderDetailedList(
 			contentEl,
 			"Recent skipped",
@@ -76,19 +89,6 @@ export class SyncProgressModal extends Modal {
 		}
 	}
 }
-
-function renderNameList(containerEl: HTMLElement, heading: string, items: string[]): void {
-	if (items.length === 0) {
-		return;
-	}
-
-	containerEl.createEl("h4", { text: heading });
-	const listEl = containerEl.createEl("ul");
-	for (const item of items) {
-		listEl.createEl("li", { text: item });
-	}
-}
-
 function renderDetailedList(containerEl: HTMLElement, heading: string, items: string[]): void {
 	if (items.length === 0) {
 		return;
