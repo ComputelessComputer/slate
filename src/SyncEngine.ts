@@ -23,6 +23,11 @@ type SyncDocumentResult =
 	| { status: "synced" }
 	| { status: "skipped"; reason: string };
 
+interface LocalDocumentRecord {
+	lastModified: string;
+	vaultPath: string;
+}
+
 const MAX_PROGRESS_ITEMS = 8;
 
 export class SyncEngine {
@@ -70,6 +75,7 @@ export class SyncEngine {
 
 		try {
 			await this.ensureFolderExists(this.getSyncRootPath());
+			const localDocumentIndex = await this.buildLocalDocumentIndex();
 
 			this.setProgressPhase("Authenticating");
 			new Notice("Slate: authenticating...");
@@ -87,6 +93,7 @@ export class SyncEngine {
 
 			for (const entry of rootEntries.entries) {
 				const cached = this.settings.syncState[entry.id];
+				this.hydrateCachedVaultPath(cached, localDocumentIndex.get(entry.id));
 				const cachedItem = this.getCachedItem(entry, cached);
 				this.setProgressPhase("Listing cloud items", cachedItem?.visibleName ?? cached?.visibleName ?? entry.id);
 
@@ -120,6 +127,13 @@ export class SyncEngine {
 
 					if (item.type === "DocumentType") {
 						this.recordDocumentQueued();
+						const localDocument = localDocumentIndex.get(item.id);
+						if (this.canReuseLocalDocument(item, localDocument)) {
+							this.settings.syncState[item.id].vaultPath = localDocument.vaultPath;
+							syncLogger.logSkipped(item.id, item.visibleName);
+							this.recordSkipped(item.id, item.visibleName, "unchanged (reused local markdown)");
+							continue;
+						}
 						documentsToSync.push(item);
 					}
 				} catch (err) {
@@ -451,6 +465,70 @@ export class SyncEngine {
 		return `${this.getSyncRootPath()}/.sync-log.md`;
 	}
 
+	private async buildLocalDocumentIndex(): Promise<Map<string, LocalDocumentRecord>> {
+		if (!this.shouldBuildLocalDocumentIndex()) {
+			return new Map();
+		}
+
+		const index = new Map<string, LocalDocumentRecord>();
+		const prefix = `${this.getSyncRootPath()}/`;
+
+		for (const file of this.vault.getMarkdownFiles()) {
+			if (!file.path.startsWith(prefix)) {
+				continue;
+			}
+
+			const content = await this.vault.cachedRead(file);
+			const remarkableId = extractFrontmatterValue(content, "remarkable_id");
+			const lastModified = extractFrontmatterValue(content, "last_modified");
+
+			if (!remarkableId || !lastModified) {
+				continue;
+			}
+
+			index.set(remarkableId, {
+				lastModified,
+				vaultPath: getParentPath(file.path),
+			});
+		}
+
+		return index;
+	}
+
+	private shouldBuildLocalDocumentIndex(): boolean {
+		if (this.settings.lastSyncTimestamp === 0) {
+			return true;
+		}
+
+		for (const record of Object.values(this.settings.syncState)) {
+			if (record.type === "DocumentType" && !record.vaultPath) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private hydrateCachedVaultPath(
+		cached: SyncRecord | undefined,
+		localDocument: LocalDocumentRecord | undefined,
+	): void {
+		if (!cached || cached.vaultPath || !localDocument) {
+			return;
+		}
+
+		if (cached.lastModified === localDocument.lastModified) {
+			cached.vaultPath = localDocument.vaultPath;
+		}
+	}
+
+	private canReuseLocalDocument(
+		item: RemarkableItem,
+		localDocument: LocalDocumentRecord | undefined,
+	): localDocument is LocalDocumentRecord {
+		return !!localDocument && item.lastModified === localDocument.lastModified;
+	}
+
 	private startProgress(): void {
 		this.progress = {
 			phase: "Starting",
@@ -617,4 +695,23 @@ function sanitizeFilename(name: string): string {
 		.replace(/[\\/:*?"<>|]/g, "_")
 		.replace(/\s+/g, " ")
 		.trim();
+}
+
+function extractFrontmatterValue(content: string, key: string): string | null {
+	const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+	if (!frontmatterMatch) {
+		return null;
+	}
+
+	const valueMatch = frontmatterMatch[1].match(new RegExp(`^${key}:\\s*"([^"]*)"$`, "m"));
+	return valueMatch?.[1] ?? null;
+}
+
+function getParentPath(path: string): string {
+	const lastSlash = path.lastIndexOf("/");
+	if (lastSlash === -1) {
+		return "";
+	}
+
+	return path.slice(0, lastSlash);
 }
