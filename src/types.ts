@@ -161,6 +161,29 @@ export interface SyncRecord {
 	hash: string;
 	lastModified: string;
 	vaultPath: string;
+	visibleName?: string;
+	parent?: string;
+	type?: "DocumentType" | "CollectionType";
+}
+
+export interface SyncFailure {
+	id: string;
+	name: string;
+	error: string;
+}
+
+export interface SyncReport {
+	startTime: number;
+	endTime: number;
+	durationMs: number;
+	cloudItemCount: number;
+	listedCount: number;
+	syncedCount: number;
+	skippedCount: number;
+	failedCount: number;
+	failedItems: SyncFailure[];
+	fatalError?: string;
+	logPath?: string;
 }
 
 // ── Plugin Settings ────────────────────────────────────────────────────────
@@ -171,6 +194,7 @@ export interface PluginSettings {
 	syncOnStartup: boolean;
 	excludePdfs: boolean;
 	lastSyncTimestamp: number;
+	lastSyncReport?: SyncReport;
 	syncState: Record<string, SyncRecord>;
 	deviceId: string;
 }

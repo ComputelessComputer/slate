@@ -3,12 +3,17 @@ import { RemarkableClient } from "./RemarkableClient";
 import { parseRmFile } from "./RmParser";
 import { generatePdf, overlayAnnotations } from "./PdfGenerator";
 import { generateMarkdown } from "./MarkdownGenerator";
+import { SyncLogger } from "./SyncLogger";
 import {
+	RawEntry,
+	ItemMetadata,
 	RemarkableItem,
 	DocumentContent,
 	RmPage,
 	ParsedDocument,
 	PluginSettings,
+	SyncRecord,
+	SyncReport,
 } from "./types";
 
 
@@ -38,59 +43,88 @@ export class SyncEngine {
 		}
 
 		this.isSyncing = true;
+		const syncLogger = new SyncLogger();
+		syncLogger.setLogPath(this.getSyncLogPath());
 
 		try {
+			await this.ensureFolderExists(this.getSyncRootPath());
+
 			new Notice("Slate: authenticating...");
 			await this.client.refreshToken();
 
 			new Notice("Slate: fetching document list...");
-			const items = await this.client.listItems();
+			const root = await this.client.getRootHash();
+			const rootEntries = await this.client.getEntries(root.hash);
+			syncLogger.setCloudItemCount(rootEntries.entries.length);
 
-			const documents = items.filter(i => i.type === "DocumentType");
-			const allItems = items;
+			const allItems: RemarkableItem[] = [];
+			const documentsToSync: RemarkableItem[] = [];
 
-			let syncedCount = 0;
-			let errorCount = 0;
+			for (const entry of rootEntries.entries) {
+				const cached = this.settings.syncState[entry.id];
+				const cachedItem = this.getCachedItem(entry, cached);
 
-		for (const doc of documents) {
-			const existing = this.settings.syncState[doc.id];
-			if (existing && existing.hash === doc.hash) {
-				const safeName = sanitizeFilename(doc.visibleName);
-				const mdPath = `${existing.vaultPath}/${safeName}.md`;
-				const localExists = !!this.vault.getAbstractFileByPath(mdPath);
-				if (localExists) continue;
-			}
+				if (cachedItem?.type === "CollectionType") {
+					allItems.push(cachedItem);
+					syncLogger.logListed(cachedItem.id, cachedItem.visibleName);
+					continue;
+				}
+
+				if (cachedItem?.type === "DocumentType" && this.hasLocalMarkdown(cachedItem, cached)) {
+					allItems.push(cachedItem);
+					syncLogger.logListed(cachedItem.id, cachedItem.visibleName);
+					syncLogger.logSkipped(cachedItem.id, cachedItem.visibleName);
+					continue;
+				}
 
 				try {
-					await this.syncDocument(doc, allItems);
-					syncedCount++;
+					const item = await this.fetchItem(entry);
+					if (!item) {
+						continue;
+					}
+
+					allItems.push(item);
+					syncLogger.logListed(item.id, item.visibleName);
+					this.cacheItem(item);
+
+					if (item.type === "DocumentType") {
+						documentsToSync.push(item);
+					}
 				} catch (err) {
-					console.error(`Failed to sync "${doc.visibleName}":`, err);
-					errorCount++;
+					const name = cached?.visibleName ?? entry.id;
+					console.warn(`[RemarkableSync] Failed to read entry ${entry.id}:`, err);
+					syncLogger.logFailed(entry.id, name, this.getErrorMessage(err));
 				}
 			}
 
-			const cloudIds = new Set(documents.map(d => d.id));
+			for (const doc of documentsToSync) {
+				try {
+					const result = await this.syncDocument(doc, allItems);
+					if (result === "synced") {
+						syncLogger.logSynced(doc.id, doc.visibleName);
+					} else {
+						syncLogger.logSkipped(doc.id, doc.visibleName);
+					}
+				} catch (err) {
+					console.error(`Failed to sync "${doc.visibleName}":`, err);
+					syncLogger.logFailed(doc.id, doc.visibleName, this.getErrorMessage(err));
+				}
+			}
+
+			const cloudIds = new Set(rootEntries.entries.map((entry) => entry.id));
 			for (const id of Object.keys(this.settings.syncState)) {
 				if (!cloudIds.has(id)) {
 					delete this.settings.syncState[id];
 				}
 			}
 
-			this.settings.lastSyncTimestamp = Date.now();
-			await this.saveSettings();
-
-			if (syncedCount === 0 && errorCount === 0) {
-				new Notice("Slate: everything is up to date.");
-			} else {
-				const msg = [];
-				if (syncedCount > 0) msg.push(`${syncedCount} synced`);
-				if (errorCount > 0) msg.push(`${errorCount} failed`);
-				new Notice(`Slate: ${msg.join(", ")}.`);
-			}
+			const report = await this.finalizeSync(syncLogger);
+			new Notice(syncLogger.formatNotice(report));
 		} catch (err) {
+			syncLogger.logSessionFailure(this.getErrorMessage(err));
 			console.error("Slate error:", err);
-			new Notice(`Slate failed: ${(err as Error).message}`);
+			const report = await this.finalizeSync(syncLogger);
+			new Notice(syncLogger.formatNotice(report));
 		} finally {
 			this.isSyncing = false;
 		}
@@ -99,7 +133,7 @@ export class SyncEngine {
 	private async syncDocument(
 		doc: RemarkableItem,
 		allItems: RemarkableItem[],
-	): Promise<void> {
+	): Promise<"synced" | "skipped"> {
 
 
 		const contentEntry = doc.fileEntries.find(e => e.id.endsWith(".content"));
@@ -125,7 +159,7 @@ export class SyncEngine {
 		}
 
 		if (this.settings.excludePdfs && content.fileType === "pdf") {
-			return;
+			return "skipped";
 		}
 
 		let basePdf: ArrayBuffer | null = null;
@@ -182,7 +216,7 @@ export class SyncEngine {
 		}
 
 		if (!pdfBytes && !baseEpub && rawRmFiles.size === 0) {
-			return;
+			return "skipped";
 		}
 
 		if (pdfBytes) {
@@ -214,14 +248,91 @@ export class SyncEngine {
 
 		const pdfRelPath = pdfBytes ? `attachments/${safeName}.pdf` : "";
 		const mdContent = generateMarkdown(parsed, pdfRelPath, epubRelPath);
-		await this.writeFile(mdPath, new TextEncoder().encode(mdContent).buffer);
+		await this.writeFile(mdPath, new TextEncoder().encode(mdContent).buffer as ArrayBuffer);
 
 		this.settings.syncState[doc.id] = {
 			hash: doc.hash,
 			lastModified: doc.lastModified,
 			vaultPath: vaultFolderPath,
+			visibleName: doc.visibleName,
+			parent: doc.parent,
+			type: doc.type,
 		};
 		await this.saveSettings();
+
+		return "synced";
+	}
+
+	private async fetchItem(entry: RawEntry): Promise<RemarkableItem | null> {
+		const itemEntries = await this.client.getEntries(entry.hash);
+		const fileEntries = itemEntries.entries;
+
+		const metaEntry = fileEntries.find((fileEntry) => fileEntry.id.endsWith(".metadata"));
+		if (!metaEntry) {
+			console.warn(`[RemarkableSync] No metadata for entry ${entry.id}, skipping`);
+			return null;
+		}
+
+		const metaText = await this.client.getTextByHash(metaEntry.hash);
+		const metadata = JSON.parse(metaText) as ItemMetadata;
+
+		if (metadata.deleted) {
+			return null;
+		}
+
+		if (metadata.type !== "DocumentType" && metadata.type !== "CollectionType") {
+			return null;
+		}
+
+		return {
+			id: entry.id,
+			hash: entry.hash,
+			visibleName: metadata.visibleName,
+			lastModified: metadata.lastModified,
+			parent: metadata.parent,
+			pinned: metadata.pinned,
+			type: metadata.type,
+			fileEntries,
+		};
+	}
+
+	private getCachedItem(entry: RawEntry, cached?: SyncRecord): RemarkableItem | null {
+		if (!cached || cached.hash !== entry.hash || !cached.visibleName || !cached.type) {
+			return null;
+		}
+
+		return {
+			id: entry.id,
+			hash: entry.hash,
+			visibleName: cached.visibleName,
+			lastModified: cached.lastModified,
+			parent: cached.parent ?? "",
+			pinned: false,
+			type: cached.type,
+			fileEntries: [],
+		};
+	}
+
+	private cacheItem(item: RemarkableItem): void {
+		const existing = this.settings.syncState[item.id];
+		this.settings.syncState[item.id] = {
+			hash: item.hash,
+			lastModified: item.lastModified,
+			vaultPath: existing?.vaultPath ?? "",
+			visibleName: item.visibleName,
+			parent: item.parent,
+			type: item.type,
+		};
+	}
+
+	private hasLocalMarkdown(item: RemarkableItem, cached?: SyncRecord): boolean {
+		if (!cached?.vaultPath) {
+			return false;
+		}
+
+		const safeName = sanitizeFilename(item.visibleName);
+		const mdPath = `${cached.vaultPath}/${safeName}.md`;
+		return !!this.vault.getAbstractFileByPath(mdPath);
 	}
 
 	private getPageOrder(content: DocumentContent, doc: RemarkableItem): string[] {
@@ -290,6 +401,50 @@ export class SyncEngine {
 		} else {
 			await this.vault.createBinary(path, data);
 		}
+	}
+
+	private getSyncRootPath(): string {
+		return this.settings.syncFolder || "remarkable";
+	}
+
+	private getSyncLogPath(): string {
+		return `${this.getSyncRootPath()}/.sync-log.md`;
+	}
+
+	private async finalizeSync(syncLogger: SyncLogger): Promise<SyncReport> {
+		this.settings.lastSyncTimestamp = Date.now();
+		const report = syncLogger.getReport();
+		this.settings.lastSyncReport = report;
+
+		try {
+			await this.writeSyncLog(syncLogger, report);
+		} catch (err) {
+			console.error("Slate log write error:", err);
+		}
+
+		await this.saveSettings();
+		return report;
+	}
+
+	private async writeSyncLog(syncLogger: SyncLogger, report: SyncReport): Promise<void> {
+		const logPath = this.getSyncLogPath();
+		const existing = this.vault.getAbstractFileByPath(logPath);
+
+		if (existing instanceof TFile) {
+			const currentContent = await this.vault.read(existing);
+			await this.vault.modify(existing, syncLogger.updateLogContent(currentContent, report));
+			return;
+		}
+
+		await this.vault.create(logPath, syncLogger.createLogContent(report));
+	}
+
+	private getErrorMessage(err: unknown): string {
+		if (err instanceof Error && err.message) {
+			return err.message;
+		}
+
+		return "Unknown error";
 	}
 }
 
