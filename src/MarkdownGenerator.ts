@@ -1,5 +1,7 @@
 import { ParsedDocument } from "./types";
 
+const PDF_EMBED_FRAGMENT = "#page=1";
+
 export function generateMarkdown(doc: ParsedDocument, pdfRelativePath: string, epubRelativePath = ""): string {
 	const lines: string[] = [];
 
@@ -16,7 +18,7 @@ export function generateMarkdown(doc: ParsedDocument, pdfRelativePath: string, e
 	lines.push("");
 
 	if (pdfRelativePath) {
-		lines.push(`![[${pdfRelativePath}]]`);
+		lines.push(`![[${pdfRelativePath}${PDF_EMBED_FRAGMENT}]]`);
 		lines.push("");
 	}
 

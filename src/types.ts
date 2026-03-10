@@ -161,6 +161,7 @@ export interface SyncRecord {
 	hash: string;
 	lastModified: string;
 	vaultPath: string;
+	renderVersion?: number;
 }
 
 // ── Plugin Settings ────────────────────────────────────────────────────────

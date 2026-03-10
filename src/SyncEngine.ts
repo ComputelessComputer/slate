@@ -11,6 +11,7 @@ import {
 	PluginSettings,
 } from "./types";
 
+const PDF_RENDER_VERSION = 4;
 
 export class SyncEngine {
 	private isSyncing = false;
@@ -54,7 +55,11 @@ export class SyncEngine {
 
 		for (const doc of documents) {
 			const existing = this.settings.syncState[doc.id];
-			if (existing && existing.hash === doc.hash) {
+			if (
+				existing &&
+				existing.hash === doc.hash &&
+				existing.renderVersion === PDF_RENDER_VERSION
+			) {
 				const safeName = sanitizeFilename(doc.visibleName);
 				const mdPath = `${existing.vaultPath}/${safeName}.md`;
 				const localExists = !!this.vault.getAbstractFileByPath(mdPath);
@@ -220,6 +225,7 @@ export class SyncEngine {
 			hash: doc.hash,
 			lastModified: doc.lastModified,
 			vaultPath: vaultFolderPath,
+			renderVersion: PDF_RENDER_VERSION,
 		};
 		await this.saveSettings();
 	}

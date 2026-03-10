@@ -24,86 +24,97 @@ interface PageLayout {
 	pageHeight: number;
 }
 
-function computePageLayout(pages: RmPage[], transform: Transform): PageLayout {
+interface ContentBounds {
+	minX: number;
+	maxX: number;
+	minY: number;
+	maxY: number;
+}
+
+function computePageLayout(page: RmPage, transform: Transform): PageLayout {
+	const bounds = computeContentBounds(page, transform);
+	if (!bounds) {
+		return {
+			scale: PDF_SCALE,
+			offsetX: 0,
+			offsetY: 0,
+			pageWidth: PDF_WIDTH,
+			pageHeight: PDF_HEIGHT,
+		};
+	}
+
+	const PADDING = 40;
+	const minX = bounds.minX - PADDING;
+	const minY = bounds.minY - PADDING;
+	const maxX = bounds.maxX + PADDING;
+	const maxY = bounds.maxY + PADDING;
+	const contentW = Math.max(1, maxX - minX);
+	const contentH = Math.max(1, maxY - minY);
+	const fitWidthScale = PDF_WIDTH / contentW;
+	const pageHeight = Math.max(PDF_SCALE * 200, contentH * fitWidthScale);
+
+	return {
+		scale: fitWidthScale,
+		offsetX: -minX,
+		offsetY: -minY,
+		pageWidth: PDF_WIDTH,
+		pageHeight,
+	};
+}
+
+function computeContentBounds(page: RmPage, transform: Transform): ContentBounds | null {
 	let minX = Infinity, maxX = -Infinity;
 	let minY = Infinity, maxY = -Infinity;
 
-	for (const page of pages) {
-		for (const layer of page.layers) {
-			for (const stroke of layer.strokes) {
-				for (const seg of stroke.segments) {
-					const tx = transform.m11 * seg.x + transform.m12 * seg.y + transform.m13;
-					const ty = transform.m21 * seg.x + transform.m22 * seg.y + transform.m23;
-					if (tx < minX) minX = tx;
-					if (tx > maxX) maxX = tx;
-					if (ty < minY) minY = ty;
-					if (ty > maxY) maxY = ty;
-				}
+	for (const layer of page.layers) {
+		for (const stroke of layer.strokes) {
+			const pen = getNormalizedPen(stroke.pen);
+			if (pen === NormalizedPen.ERASER || pen === NormalizedPen.ERASE_AREA) {
+				continue;
+			}
+
+			const widthMult = PEN_WIDTH_MULTIPLIER[pen] ?? 2;
+			const strokePadding = stroke.width * widthMult;
+
+			for (const seg of stroke.segments) {
+				const tx = transform.m11 * seg.x + transform.m12 * seg.y + transform.m13;
+				const ty = transform.m21 * seg.x + transform.m22 * seg.y + transform.m23;
+				if (tx - strokePadding < minX) minX = tx - strokePadding;
+				if (tx + strokePadding > maxX) maxX = tx + strokePadding;
+				if (ty - strokePadding < minY) minY = ty - strokePadding;
+				if (ty + strokePadding > maxY) maxY = ty + strokePadding;
 			}
 		}
-		for (const hl of page.highlights) {
-			for (const r of hl.rects) {
-				const corners = [
-					[r.x, r.y],
-					[r.x + r.w, r.y],
-					[r.x, r.y + r.h],
-					[r.x + r.w, r.y + r.h],
-				];
-				for (const [cx, cy] of corners) {
-					const tx = transform.m11 * cx + transform.m12 * cy + transform.m13;
-					const ty = transform.m21 * cx + transform.m22 * cy + transform.m23;
-					if (tx < minX) minX = tx;
-					if (tx > maxX) maxX = tx;
-					if (ty < minY) minY = ty;
-					if (ty > maxY) maxY = ty;
-				}
+	}
+
+	for (const hl of page.highlights) {
+		for (const r of hl.rects) {
+			const corners = [
+				[r.x, r.y],
+				[r.x + r.w, r.y],
+				[r.x, r.y + r.h],
+				[r.x + r.w, r.y + r.h],
+			];
+			for (const [cx, cy] of corners) {
+				const tx = transform.m11 * cx + transform.m12 * cy + transform.m13;
+				const ty = transform.m21 * cx + transform.m22 * cy + transform.m23;
+				if (tx < minX) minX = tx;
+				if (tx > maxX) maxX = tx;
+				if (ty < minY) minY = ty;
+				if (ty > maxY) maxY = ty;
 			}
 		}
 	}
 
 	if (!isFinite(minX)) {
-		return {
-			scale: PDF_SCALE,
-			offsetX: 0,
-			offsetY: 0,
-			pageWidth: PDF_WIDTH,
-			pageHeight: PDF_HEIGHT,
-		};
+		return null;
 	}
-
-	const fitsStandardCanvas =
-		minX >= -1 && maxX <= RM_WIDTH + 1 &&
-		minY >= -1 && maxY <= RM_HEIGHT + 1;
-
-	if (fitsStandardCanvas) {
-		return {
-			scale: PDF_SCALE,
-			offsetX: 0,
-			offsetY: 0,
-			pageWidth: PDF_WIDTH,
-			pageHeight: PDF_HEIGHT,
-		};
-	}
-
-	const PADDING = 20;
-	minX -= PADDING;
-	minY -= PADDING;
-	maxX += PADDING;
-	maxY += PADDING;
-
-	const contentW = maxX - minX;
-	const contentH = maxY - minY;
-
-	const scaleX = PDF_WIDTH / contentW;
-	const scaleY = PDF_HEIGHT / contentH;
-	const fitScale = Math.min(scaleX, scaleY);
 
 	return {
-		scale: fitScale,
-		offsetX: -minX,
-		offsetY: -minY,
-		pageWidth: PDF_WIDTH,
-		pageHeight: PDF_HEIGHT,
+		minX,
+		maxX,
+		minY,
+		maxY,
 	};
 }
 
@@ -112,10 +123,10 @@ export async function generatePdf(
 	transform?: Transform,
 ): Promise<ArrayBuffer> {
 	const xform = transform ?? { m11: 1, m12: 0, m13: 0, m21: 0, m22: 1, m23: 0, m31: 0, m32: 0, m33: 1 };
-	const layout = computePageLayout(pages, xform);
 	const pdfDoc = await PDFDocument.create();
 
 	for (const rmPage of pages) {
+		const layout = computePageLayout(rmPage, xform);
 		const page = pdfDoc.addPage([layout.pageWidth, layout.pageHeight]);
 		drawPage(page, rmPage, xform, layout);
 	}

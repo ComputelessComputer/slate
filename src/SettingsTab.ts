@@ -12,7 +12,7 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		// ── Header ────────────────────────────────────────────────────────
-		new Setting(containerEl).setName("Slate").setHeading();
+		new Setting(containerEl).setName("Connection").setHeading();
 
 		// ── Connection Status ─────────────────────────────────────────────
 		const statusEl = containerEl.createEl("div", {
@@ -56,10 +56,9 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 						})
 				);
 		} else {
-			const descFrag = document.createDocumentFragment();
-			descFrag.appendText("Get a one-time code from ");
+		const descFrag = document.createDocumentFragment();
 			const link = descFrag.createEl("a", {
-				text: "my.remarkable.com",
+				text: "Get a one-time code",
 				href: "https://my.remarkable.com/device/desktop/connect",
 			});
 			link.setAttr("target", "_blank");
@@ -71,7 +70,7 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 				.setName("One-time code")
 				.setDesc(descFrag)
 				.addText((text) => {
-					text.setPlaceholder("abcdefgh")
+				text.setPlaceholder("Enter code")
 						.onChange((value) => {
 							codeValue = value;
 						});
@@ -90,14 +89,14 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 		}
 
 		// ── Sync Settings ─────────────────────────────────────────────────
-		new Setting(containerEl).setName("Sync settings").setHeading();
+		new Setting(containerEl).setName("Sync").setHeading();
 
 		new Setting(containerEl)
 			.setName("Sync folder")
 			.setDesc('Vault folder where remarkable files will be saved. Default: "remarkable"')
 			.addText((text) =>
 				text
-					.setPlaceholder("remarkable")
+					.setPlaceholder("Remarkable")
 					.setValue(this.plugin.settings.syncFolder)
 					.onChange(async (value) => {
 						this.plugin.settings.syncFolder = value || "remarkable";

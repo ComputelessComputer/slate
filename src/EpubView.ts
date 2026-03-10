@@ -30,7 +30,7 @@ export class EpubView extends FileView {
 		try {
 			const data = await this.app.vault.readBinary(file);
 			const files = unzipSync(new Uint8Array(data));
-			await this.renderEpub(files);
+			this.renderEpub(files);
 		} catch (err) {
 			this.container.createEl("p", {
 				text: `Failed to load epub: ${(err as Error).message}`,
