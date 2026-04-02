@@ -1,4 +1,4 @@
-import { ParsedDocument } from "./types";
+import { ParsedDocument, SYNC_RENDER_VERSION } from "./types";
 
 const PDF_EMBED_FRAGMENT = "#page=1";
 
@@ -9,6 +9,7 @@ export function generateMarkdown(doc: ParsedDocument, pdfRelativePath: string, e
 	lines.push(`title: "${escapeYaml(doc.name)}"`);
 	lines.push(`remarkable_id: "${doc.id}"`);
 	lines.push(`last_modified: "${doc.lastModified}"`);
+	lines.push(`render_version: "${SYNC_RENDER_VERSION}"`);
 	lines.push(`page_count: ${doc.pages.length}`);
 	lines.push(`file_type: "${doc.content.fileType || "notebook"}"`);
 	if (epubRelativePath) {

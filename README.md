@@ -89,6 +89,10 @@ pnpm dev    # watch mode
 pnpm build  # production build
 ```
 
+## Acknowledgements
+
+Sync reliability, diagnostics, and progress reporting improvements were adapted from work by [@imarquart](https://github.com/imarquart) in [PR #2](https://github.com/ComputelessComputer/slate/pull/2).
+
 ## License
 
 [MIT](LICENSE)

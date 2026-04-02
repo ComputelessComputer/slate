@@ -2,8 +2,6 @@ import { requestUrl, RequestUrlResponse } from "obsidian";
 import {
 	RawEntry,
 	EntriesFile,
-	ItemMetadata,
-	RemarkableItem,
 	RootHashResponse,
 } from "./types";
 import {
@@ -13,6 +11,9 @@ import {
 } from "./constants";
 
 const TAG = "[RemarkableSync]";
+const MAX_RATE_LIMIT_RETRIES = 5;
+const MAX_SERVER_RETRIES = 3;
+const BASE_DELAY_MS = 1000;
 
 async function rmRequest(opts: {
 	url: string;
@@ -23,13 +24,88 @@ async function rmRequest(opts: {
 }): Promise<RequestUrlResponse> {
 	const { url, method = "GET", headers, body, contentType } = opts;
 
-	try {
-		return await requestUrl({ url, method, headers, body, contentType });
-	} catch (err: unknown) {
-		const statusCode = (err as { status?: number })?.status;
-		const shortUrl = url.split("?")[0].slice(0, 80);
-		console.error(`${TAG} ${method} ${shortUrl} → ${statusCode ?? "network_error"}`, err);
-		throw new RmApiError(statusCode ? String(statusCode) : "network_error", statusCode ?? 0);
+	for (let attempt = 0; ; attempt++) {
+		try {
+			return await requestUrl({ url, method, headers, body, contentType });
+		} catch (err: unknown) {
+			const statusCode = (err as { status?: number })?.status;
+			const shortUrl = url.split("?")[0].slice(0, 80);
+			const retryLimit = getRetryLimit(statusCode);
+
+			if (retryLimit > 0 && attempt < retryLimit) {
+				const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+				console.warn(
+					`${TAG} ${method} ${shortUrl} → ${statusCode}, retry ${attempt + 1}/${retryLimit} in ${delay}ms`,
+				);
+				await sleep(delay);
+				continue;
+			}
+
+			console.error(`${TAG} ${method} ${shortUrl} → ${statusCode ?? "network_error"}`, err);
+			throw new RmApiError(statusCode ? String(statusCode) : "network_error", statusCode ?? 0);
+		}
+	}
+}
+
+function getRetryLimit(statusCode?: number): number {
+	if (statusCode === 429) {
+		return MAX_RATE_LIMIT_RETRIES;
+	}
+
+	if (statusCode === 500 || statusCode === 502 || statusCode === 503) {
+		return MAX_SERVER_RETRIES;
+	}
+
+	return 0;
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isHtmlResponse(text: string): boolean {
+	const normalized = text.trimStart().toLowerCase();
+	return normalized.startsWith("<html") || normalized.startsWith("<!doctype html");
+}
+
+function isHtmlBinaryResponse(data: ArrayBuffer): boolean {
+	const prefix = new TextDecoder().decode(data.slice(0, 128));
+	return isHtmlResponse(prefix);
+}
+
+async function getTextWithHtmlRetry(requestFn: () => Promise<RequestUrlResponse>, hash: string): Promise<string> {
+	for (let attempt = 0; ; attempt++) {
+		const response = await requestFn();
+		if (!isHtmlResponse(response.text)) {
+			return response.text;
+		}
+
+		if (attempt < MAX_SERVER_RETRIES) {
+			const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+			console.warn(`${TAG} GET file/${hash.slice(0, 12)}... returned HTML, retry ${attempt + 1}/${MAX_SERVER_RETRIES} in ${delay}ms`);
+			await sleep(delay);
+			continue;
+		}
+
+		throw new RmApiError(`html_error_response:${hash}`, 500);
+	}
+}
+
+async function getBinaryWithHtmlRetry(requestFn: () => Promise<RequestUrlResponse>, hash: string): Promise<ArrayBuffer> {
+	for (let attempt = 0; ; attempt++) {
+		const response = await requestFn();
+		if (!isHtmlBinaryResponse(response.arrayBuffer)) {
+			return response.arrayBuffer;
+		}
+
+		if (attempt < MAX_SERVER_RETRIES) {
+			const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+			console.warn(`${TAG} GET file/${hash.slice(0, 12)}... returned HTML, retry ${attempt + 1}/${MAX_SERVER_RETRIES} in ${delay}ms`);
+			await sleep(delay);
+			continue;
+		}
+
+		throw new RmApiError(`html_error_response:${hash}`, 500);
 	}
 }
 
@@ -114,67 +190,25 @@ export class RemarkableClient {
 	}
 
 	async getEntries(hash: string): Promise<EntriesFile> {
-		const response = await this.authedRequest(`${RM_RAW_HOST}/sync/v3/files/${hash}`);
-		return parseEntriesText(response.text);
+		const text = await getTextWithHtmlRetry(
+			() => this.authedRequest(`${RM_RAW_HOST}/sync/v3/files/${hash}`),
+			hash,
+		);
+		return parseEntriesText(text);
 	}
 
 	async getTextByHash(hash: string): Promise<string> {
-		const response = await this.authedRequest(`${RM_RAW_HOST}/sync/v3/files/${hash}`);
-		return response.text;
+		return await getTextWithHtmlRetry(
+			() => this.authedRequest(`${RM_RAW_HOST}/sync/v3/files/${hash}`),
+			hash,
+		);
 	}
 
 	async getBinaryByHash(hash: string): Promise<ArrayBuffer> {
-		const response = await this.authedRequest(`${RM_RAW_HOST}/sync/v3/files/${hash}`);
-		return response.arrayBuffer;
-	}
-
-	async listItems(): Promise<RemarkableItem[]> {
-		if (!this.userToken) {
-			await this.refreshToken();
-		}
-
-		const root = await this.getRootHash();
-		const rootEntries = await this.getEntries(root.hash);
-
-		const items: RemarkableItem[] = [];
-
-		for (const entry of rootEntries.entries) {
-			try {
-				const itemEntries = await this.getEntries(entry.hash);
-				const fileEntries = itemEntries.entries;
-
-				const metaEntry = fileEntries.find(e => e.id.endsWith(".metadata"));
-				if (!metaEntry) {
-					console.warn(`${TAG} No metadata for entry ${entry.id}, skipping`);
-					continue;
-				}
-
-				const metaText = await this.getTextByHash(metaEntry.hash);
-				const metadata = JSON.parse(metaText) as ItemMetadata;
-
-				if (metadata.deleted) continue;
-
-				if (metadata.type !== "DocumentType" && metadata.type !== "CollectionType") {
-					continue;
-				}
-
-				items.push({
-					id: entry.id,
-					hash: entry.hash,
-					visibleName: metadata.visibleName,
-					lastModified: metadata.lastModified,
-					parent: metadata.parent,
-					pinned: metadata.pinned,
-					type: metadata.type,
-					fileEntries,
-				});
-			} catch (err) {
-				console.warn(`${TAG} Failed to read entry ${entry.id}:`, err);
-			}
-		}
-
-
-		return items;
+		return await getBinaryWithHtmlRetry(
+			() => this.authedRequest(`${RM_RAW_HOST}/sync/v3/files/${hash}`),
+			hash,
+		);
 	}
 
 	get isRegistered(): boolean { return !!this.deviceToken; }

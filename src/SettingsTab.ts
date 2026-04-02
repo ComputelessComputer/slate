@@ -1,6 +1,7 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting, TFile } from "obsidian";
 import type RemarkableSyncPlugin from "../main";
 import { generateDeviceId, RemarkableClient } from "./RemarkableClient";
+import { SyncReport } from "./types";
 
 export class RemarkableSyncSettingTab extends PluginSettingTab {
 	constructor(app: App, private plugin: RemarkableSyncPlugin) {
@@ -21,7 +22,7 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 
 		if (this.plugin.settings.deviceToken) {
 			statusEl.createEl("p", {
-			text: "Connected to remarkable cloud",
+				text: "Connected to remarkable cloud",
 				cls: "remarkable-sync-connected",
 			});
 			statusEl.createEl("p", {
@@ -51,12 +52,12 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 							this.plugin.settings.deviceId = "";
 							this.plugin.settings.syncState = {};
 							await this.plugin.savePluginSettings();
-						new Notice("Disconnected from remarkable cloud.");
+							new Notice("Disconnected from remarkable cloud.");
 							this.display(); // Refresh
 						})
 				);
 		} else {
-		const descFrag = document.createDocumentFragment();
+			const descFrag = document.createDocumentFragment();
 			const link = descFrag.createEl("a", {
 				text: "Get a one-time code",
 				href: "https://my.remarkable.com/device/desktop/connect",
@@ -70,14 +71,14 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 				.setName("One-time code")
 				.setDesc(descFrag)
 				.addText((text) => {
-				text.setPlaceholder("Enter code")
+					text.setPlaceholder("Enter code")
 						.onChange((value) => {
 							codeValue = value;
 						});
 					text.inputEl.addEventListener("keydown", (e) => {
 						if (e.key === "Enter") {
-						void registerDevice(this.plugin, codeValue, this);
-					}
+							void registerDevice(this.plugin, codeValue, this);
+						}
 					});
 				})
 				.addButton((btn) =>
@@ -147,7 +148,7 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 						.setButtonText("Sync")
 						.setCta()
 						.onClick(async () => {
-							await this.plugin.runSync();
+							await this.plugin.runSync({ showProgress: true });
 							this.display(); // Refresh to show new timestamp
 						})
 				);
@@ -167,8 +168,85 @@ export class RemarkableSyncSettingTab extends PluginSettingTab {
 							this.display();
 						})
 				);
+
+			new Setting(containerEl).setName("Last sync results").setHeading();
+			renderLastSyncResults(containerEl, this.plugin, this.app);
 		}
 	}
+}
+
+function renderLastSyncResults(
+	containerEl: HTMLElement,
+	plugin: RemarkableSyncPlugin,
+	app: App,
+): void {
+	const report: SyncReport | undefined = plugin.settings.lastSyncReport;
+	if (!report) {
+		containerEl.createEl("p", {
+			text: "No sync report available yet.",
+			cls: "setting-item-description",
+		});
+		return;
+	}
+
+	const summaryEl = containerEl.createDiv({ cls: "setting-item-description" });
+	summaryEl.createEl("p", {
+		text: `Finished: ${new Date(report.endTime).toLocaleString()}`,
+	});
+	summaryEl.createEl("p", {
+		text: `Duration: ${formatDuration(report.durationMs)}`,
+	});
+	summaryEl.createEl("p", {
+		text: `Cloud items: ${report.cloudItemCount} | Listed: ${report.listedCount} | Synced: ${report.syncedCount} | Unchanged: ${report.skippedCount} | Failed: ${report.failedCount}`,
+	});
+
+	if (report.fatalError) {
+		summaryEl.createEl("p", {
+			text: `Fatal error: ${report.fatalError}`,
+			cls: "remarkable-sync-disconnected",
+		});
+	}
+
+	if (report.failedItems.length > 0) {
+		summaryEl.createEl("p", { text: "Failed items:" });
+		const failedListEl = summaryEl.createEl("ul");
+		for (const item of report.failedItems) {
+			failedListEl.createEl("li", {
+				text: `${item.name}: ${item.error}`,
+			});
+		}
+	}
+
+	new Setting(containerEl)
+		.setName("Sync log")
+		.setDesc(report.logPath ?? getSyncLogPath(plugin.settings.syncFolder))
+		.addButton((btn) =>
+			btn
+				.setButtonText("Open")
+				.onClick(async () => {
+					const logPath = report.logPath ?? getSyncLogPath(plugin.settings.syncFolder);
+					const file = app.vault.getAbstractFileByPath(logPath);
+					if (!(file instanceof TFile)) {
+						new Notice("Sync log not found.");
+						return;
+					}
+
+					await app.workspace.getLeaf(true).openFile(file);
+				})
+		);
+}
+
+function getSyncLogPath(syncFolder: string): string {
+	const base = syncFolder || "remarkable";
+	return `${base}/.sync-log.md`;
+}
+
+function formatDuration(durationMs: number): string {
+	if (durationMs < 1000) {
+		return `${durationMs}ms`;
+	}
+
+	return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
 async function registerDevice(
