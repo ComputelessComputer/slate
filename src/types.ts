@@ -156,12 +156,84 @@ export interface ParsedDocument {
 
 // ── Sync State ─────────────────────────────────────────────────────────────
 
+export const SYNC_RENDER_VERSION = 4;
+
 export interface SyncRecord {
 	/** Hash of the item entry (changes when item is modified) */
 	hash: string;
 	lastModified: string;
 	vaultPath: string;
 	renderVersion?: number;
+	visibleName?: string;
+	parent?: string;
+	type?: "DocumentType" | "CollectionType";
+}
+
+export interface SyncFailure {
+	id: string;
+	name: string;
+	error: string;
+}
+
+export interface SyncSkip {
+	id: string;
+	name: string;
+	reason: string;
+	kind:
+		| "cached_unchanged"
+		| "reused_local_markdown"
+		| "excluded_pdf"
+		| "no_supported_content"
+		| "other";
+}
+
+export interface SyncCompleted {
+	name: string;
+	kind: "new_download" | "redownloaded";
+}
+
+export interface SyncReport {
+	startTime: number;
+	endTime: number;
+	durationMs: number;
+	cloudItemCount: number;
+	listedCount: number;
+	syncedCount: number;
+	skippedCount: number;
+	failedCount: number;
+	failedItems: SyncFailure[];
+	fatalError?: string;
+	logPath?: string;
+}
+
+export interface SyncProgressSnapshot {
+	phase: string;
+	startedAt: number;
+	currentItem?: string;
+	cloudItemCount: number;
+	inspectedItemCount: number;
+	documentCount: number;
+	processedDocumentCount: number;
+	listedCount: number;
+	listedFromCacheCount: number;
+	listedFromCloudCount: number;
+	cachedCollectionCount: number;
+	cachedDocumentCount: number;
+	syncedCount: number;
+	newDownloadCount: number;
+	redownloadCount: number;
+	skippedCount: number;
+	cachedSkipCount: number;
+	reusedLocalSkipCount: number;
+	excludedPdfSkipCount: number;
+	unsupportedContentSkipCount: number;
+	otherSkipCount: number;
+	failedCount: number;
+	recentCompleted: SyncCompleted[];
+	recentSkipped: SyncSkip[];
+	recentFailures: SyncFailure[];
+	fatalError?: string;
+	logPath?: string;
 }
 
 // ── Plugin Settings ────────────────────────────────────────────────────────
@@ -172,6 +244,7 @@ export interface PluginSettings {
 	syncOnStartup: boolean;
 	excludePdfs: boolean;
 	lastSyncTimestamp: number;
+	lastSyncReport?: SyncReport;
 	syncState: Record<string, SyncRecord>;
 	deviceId: string;
 }

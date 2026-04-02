@@ -1,14 +1,17 @@
 import { Plugin } from "obsidian";
-import { PluginSettings, DEFAULT_SETTINGS } from "./src/types";
+import { PluginSettings, DEFAULT_SETTINGS, SyncProgressSnapshot } from "./src/types";
 import { RemarkableClient } from "./src/RemarkableClient";
 import { SyncEngine } from "./src/SyncEngine";
 import { RemarkableSyncSettingTab } from "./src/SettingsTab";
+import { SyncProgressModal } from "./src/SyncProgressModal";
 import { EpubView, EPUB_VIEW_TYPE } from "./src/EpubView";
 
 export default class RemarkableSyncPlugin extends Plugin {
 	settings!: PluginSettings;
 	private client: RemarkableClient | null = null;
 	private syncEngine: SyncEngine | null = null;
+	private statusBarItemEl!: HTMLElement;
+	private syncProgressModal: SyncProgressModal | null = null;
 
 	async onload(): Promise<void> {
 		await this.loadPluginSettings();
@@ -25,9 +28,18 @@ export default class RemarkableSyncPlugin extends Plugin {
 
 		// Status bar
 		const statusBarItem = this.addStatusBarItem();
+		this.statusBarItemEl = statusBarItem;
 		statusBarItem.addClass("mod-clickable");
-		statusBarItem.setText("Slate");
-		statusBarItem.addEventListener("click", () => { void this.runSync(); });
+		statusBarItem.addEventListener("click", () => {
+			if (this.syncEngine?.syncing) {
+				this.showSyncProgress();
+				return;
+			}
+
+			void this.runSync({ showProgress: true });
+		});
+		this.updateStatusBar();
+		this.registerInterval(window.setInterval(() => this.updateStatusBar(), 1000));
 
 		// Commands
 		this.addCommand({
@@ -74,11 +86,62 @@ export default class RemarkableSyncPlugin extends Plugin {
 		);
 	}
 
-	async runSync(): Promise<void> {
+	async runSync(options: { showProgress?: boolean } = {}): Promise<void> {
+		const { showProgress = false } = options;
+
 		if (!this.syncEngine) {
 			return;
 		}
+
+		if (this.syncEngine.syncing) {
+			if (showProgress) {
+				this.showSyncProgress();
+			}
+			return;
+		}
+
+		if (showProgress) {
+			this.showSyncProgress();
+		}
 		await this.syncEngine.sync();
+	}
+
+	getSyncProgress(): SyncProgressSnapshot | null {
+		return this.syncEngine?.getProgressSnapshot() ?? null;
+	}
+
+	private showSyncProgress(): void {
+		if (!this.syncProgressModal) {
+			this.syncProgressModal = new SyncProgressModal(this.app, this, () => {
+				this.syncProgressModal = null;
+			});
+		}
+
+		this.syncProgressModal.open();
+	}
+
+	private updateStatusBar(): void {
+		if (!this.statusBarItemEl) {
+			return;
+		}
+
+		const progress = this.getSyncProgress();
+		if (!this.syncEngine?.syncing || !progress) {
+			this.statusBarItemEl.setText("Slate");
+			return;
+		}
+
+		if (progress.phase === "Listing cloud items") {
+			this.statusBarItemEl.setText(`Slate ${progress.inspectedItemCount}/${progress.cloudItemCount}`);
+			return;
+		}
+
+		if (progress.documentCount > 0) {
+			this.statusBarItemEl.setText(`Slate ${progress.processedDocumentCount}/${progress.documentCount}`);
+			return;
+		}
+
+		this.statusBarItemEl.setText(`Slate ${progress.phase}`);
 	}
 
 	// ── Settings Persistence ────────────────────────────────────────────────
